@@ -350,8 +350,8 @@
     if (u >= 0) { camZ = u * LZ - 1.2; pz = camZ + PIV; }
     else {
       var t = smooth(Math.min(1, -u));
-      camZ = -1.2 - t * LZ * 0.95; pz = (camZ + PIV) + (LZ * 0.5 - camZ - PIV) * t;
-      yaw = -0.78 * t; pitch = 0.36 * t;
+      camZ = -1.2 - t * LZ * 0.42; pz = (camZ + PIV) + (LZ * 0.5 - camZ - PIV) * t;
+      yaw = -1.05 * t; pitch = 0.42 * t;
     }
     yaw += cam.dyaw + cam.tx; pitch += cam.dpitch + cam.ty;
     P.camZ = camZ; P.pz = pz; P.cy = Math.cos(yaw); P.sy = Math.sin(yaw); P.cp = Math.cos(pitch); P.sp = Math.sin(pitch);
@@ -425,7 +425,7 @@
     var near = Math.min(1, 5 / v.d);
     // faint glass on each key pane
     if (quad(-HX, -HY, HX, HY, z, Q)) {
-      ctx.globalAlpha = 0.018 + 0.03 * near; ctx.fillStyle = col; ctx.beginPath(); pathQuad(Q); ctx.fill();
+      ctx.globalAlpha = (P.camZ < 0 ? 0.012 : 0.004) + 0.008 * near; ctx.fillStyle = col; ctx.beginPath(); pathQuad(Q); ctx.fill();
     }
     // table outlines once grains have settled in this band
     var su = settleU(l), z0 = ZONE[l][0], z1 = ZONE[l][1];
@@ -505,15 +505,15 @@
         if (!fpos(f, uu) || !proj(OUT[0], OUT[1], uu * LZ)) { prevX = null; continue; }
         if (prevX !== null) {
           ctx.globalAlpha = (dim ? 0.15 : 0.85) * (1 - k / 8);
-          ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.8, Math.min(4, PR[2] * 0.012));
+          ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.8, Math.min(2.2, PR[2] * 0.008));
           ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(PR[0], PR[1]); ctx.stroke();
         }
         prevX = PR[0]; prevY = PR[1];
       }
       if (prevX !== null) {
-        var r = Math.max(1.4, Math.min(9, PR[2] * 0.022)) * (p === follow ? 1.8 : 1);
-        ctx.globalAlpha = dim ? 0.12 : 0.28; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(prevX, prevY, r * 2.4, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = dim ? 0.3 : 1; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(prevX, prevY, r * 0.7, 0, 6.2832); ctx.fill();
+        var r = Math.max(1.3, Math.min(4.2, PR[2] * 0.014)) * (p === follow ? 1.8 : 1), fade = Math.min(1, (PR[3] - NEAR) / 1.2);
+        ctx.globalAlpha = (dim ? 0.12 : 0.28) * fade; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(prevX, prevY, r * 2.4, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = (dim ? 0.3 : 1) * fade; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(prevX, prevY, r * 0.7, 0, 6.2832); ctx.fill();
       }
     });
     sparks.forEach(function (s) {
@@ -530,9 +530,9 @@
     pose();
     drawPanes();
     var vs = visibleSlices();
-    var stride = Math.max(1, Math.ceil(vs.length * fibers.length / 26000));
+    var wsum = 0; vs.forEach(function (v) { v.w = 1 / Math.max(1.5, v.d); wsum += v.w; });
     var selSet = sel ? sel.set : null;
-    vs.forEach(function (v) { drawSlice(v, stride, selSet); });
+    vs.forEach(function (v) { drawSlice(v, Math.max(1, Math.ceil(fibers.length / (34000 * v.w / wsum))), selSet); });
     drawPulses();
     hud();
   }
