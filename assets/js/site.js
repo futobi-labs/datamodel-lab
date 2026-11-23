@@ -36,7 +36,7 @@
         id: "guide", title: "Field Guide", path: "guide/",
         blurb: "What's commonplace in modeling today, written down plainly, with opinions where practice has settled and open questions where it hasn't.",
         pages: [
-          { slug: "medallion", title: "Medallion architecture", blurb: "Bronze, silver, gold: what each layer owns, what it must never do, and where the lines blur.", layers: ["bronze", "silver", "gold"], related: ["explore/medallion-stack", "explore/lineage-flow", "explore/anatomy"] },
+          { slug: "medallion", title: "Medallion architecture", blurb: "Bronze, silver, gold: what each layer owns, what it must never do, and where the lines blur.", layers: ["bronze", "silver", "gold"], related: ["explore/medallion-stack", "explore/lineage-flow", "explore/synthesis"] },
           { slug: "dimensional-modeling", title: "Dimensional modeling", blurb: "Grain first. Facts, dimensions, star versus snowflake, degenerate and junk dimensions.", layers: ["gold"], related: ["explore/star-schema", "explore/bus-matrix"] },
           { slug: "slowly-changing-dimensions", title: "Slowly changing dimensions", blurb: "Type 0 through 7, which ones you actually need, and how to load Type 2 without tears.", layers: ["silver", "gold"], related: ["explore/star-schema"] },
           { slug: "conformed-dimensions", title: "Conformed dimensions & the bus matrix", blurb: "How separate facts share one language, and the matrix that keeps you honest.", layers: ["gold"], related: ["explore/bus-matrix"] },
@@ -57,7 +57,7 @@
           { slug: "medallion-stack", title: "Medallion stack", blurb: "A zoomable stack of the lakehouse: layer, table, column. Drill in and back out.", layers: ["bronze", "silver", "gold"], related: ["guide/medallion"] },
           { slug: "bus-matrix", title: "Bus matrix", blurb: "Facts against conformed dimensions, as a matrix you can click through.", layers: ["gold"], related: ["guide/conformed-dimensions"] },
           { slug: "engine-layers", title: "Engine layer cake", blurb: "Follow a report visual down through DAX, the semantic engine, Direct Lake and Delta files.", layers: ["gold", "semantic", "report"], related: ["guide/analytic-engine-layering"] },
-          { slug: "anatomy", title: "Data anatomy", blurb: "A living cross-section: sources as skin, bronze fat, silver muscle, gold bone, semantic organs. Zoom through the tissue and follow one cell inward.", layers: ["source", "bronze", "silver", "gold", "semantic", "report"], related: ["guide/medallion", "guide/semantic-models"] },
+          { slug: "synthesis", title: "Data synthesis", blurb: "Fly through 2,400 stacked glass panes and watch specks of data settle into tables, crystallize into facts and dimensions, join into a model and surface as reports.", layers: ["source", "bronze", "silver", "gold", "semantic", "report"], related: ["guide/medallion", "guide/semantic-models"] },
           { slug: "semantic-engine", title: "Semantic engine", blurb: "Inside the model and the engine that answers it: formula engine, storage engine, VertiPaq memory, Direct Lake, Import and DirectQuery.", layers: ["semantic", "report"], related: ["guide/semantic-models", "guide/analytic-engine-layering"] }
         ]
       },
