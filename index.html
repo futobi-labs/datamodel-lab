@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en" data-root="./">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Model Lab</title>
+<meta name="description" content="An exploratory notebook on data modeling: medallion architecture, dimensional models, semantic models, and interactive views of model structure from source to report.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script src="assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="assets/js/model.js"></script>
+<style>
+  .hero__viz text { font-size: 11px; fill: var(--ink-2); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+  .principles li { border-top: 3px solid var(--c); padding: 12px 2px 0; }
+  .principles b { display: block; font-size: 16px; margin-bottom: 4px; }
+  .principles span { color: var(--ink-2); font-size: 14.5px; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Data Model Lab</p>
+      <h1>The shape of the data, not the data.</h1>
+      <p class="lede">A working notebook on how analytics models are built today: medallion layers, star schemas, semantic models and the engines underneath. Half field guide, half playground for seeing a model's structure from source system to report visual.</p>
+      <div class="btn-row">
+        <a class="btn btn--primary" href="guide/">Read the field guide</a>
+        <a class="btn" href="explore/">Open the explorations</a>
+      </div>
+    </div>
+    <div class="hero__viz" id="hero" aria-hidden="true"></div>
+  </section>
+
+  <div class="section-title"><h2>Principles in one breath</h2></div>
+  <ul class="principles">
+    <li style="--c:var(--l-bronze)"><b>Land it raw, once.</b><span>Bronze keeps the source's shape and adds only audit columns. Shortcuts and views count.</span></li>
+    <li style="--c:var(--l-silver)"><b>Clean it where it's shared.</b><span>Silver owns typing, de-duplication and the joins everyone would otherwise repeat.</span></li>
+    <li style="--c:var(--l-gold)"><b>Model to a declared grain.</b><span>Gold is a star: facts at one stated grain, conformed dimensions, surrogate keys.</span></li>
+    <li style="--c:var(--l-semantic)"><b>Measures, not columns.</b><span>The semantic model adds relationships, meaning and DAX, and hides the plumbing.</span></li>
+    <li style="--c:var(--l-report)"><b>Reports ask; they don't compute.</b><span>If a visual needs logic, that logic belongs one layer down.</span></li>
+  </ul>
+
+  <div class="section-title"><h2>Field guide</h2><a href="guide/">All guide pages &rarr;</a></div>
+  <div data-cards="guide"></div>
+
+  <div class="section-title"><h2>Explorations</h2><a href="explore/">All explorations &rarr;</a></div>
+  <div data-cards="explore"></div>
+
+  <div class="section-title"><h2>Sister lab</h2><a href="../dataviz-lab/">Data Viz Lab &rarr;</a></div>
+  <p style="color:var(--ink-2);max-width:var(--prose);margin-top:0">This lab is about structure. Its sibling is about the charts that sit on top: experimental D3, Stephen Few, Edward Tufte and newer forms.</p>
+  <div data-sister-cards></div>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  var host = document.getElementById("hero");
+  function draw(m) {
+    host.innerHTML = "";
+    var W = 560, H = 300, order = ["source", "bronze", "silver", "gold", "semantic", "report"];
+    var cols = order.map(function (l, i) {
+      var ts = m.tables.filter(function (t) { return t.layer === l; });
+      return { l: l, ts: ts, x: 30 + i * (W - 70) / 5 };
+    });
+    var svg = d3.select(host).append("svg").attr("viewBox", [0, 0, W, H]);
+    var pos = {};
+    cols.forEach(function (c) {
+      var n = c.ts.length, gap = 4, bh = Math.min(22, (H - 60 - gap * (n - 1)) / n), total = n * bh + (n - 1) * gap, y0 = (H - total) / 2 + 8;
+      c.ts.forEach(function (t, j) { pos[t.id] = { x: c.x, y: y0 + j * (bh + gap) + bh / 2, h: bh, l: c.l }; });
+    });
+    var link = d3.linkHorizontal();
+    var paths = svg.append("g").attr("fill", "none").selectAll("path").data(m.tableEdges.filter(function (e) { return pos[e.from] && pos[e.to]; })).join("path")
+      .attr("d", function (e) { return link({ source: [pos[e.from].x + 10, pos[e.from].y], target: [pos[e.to].x, pos[e.to].y] }); })
+      .attr("stroke", function (e) { return DML.layerColor(m.tableById[e.from].layer); }).attr("stroke-opacity", .28).attr("stroke-width", function (e) { return Math.min(4, 0.6 + e.count / 4); });
+    svg.append("g").selectAll("rect").data(Object.keys(pos)).join("rect")
+      .attr("x", function (id) { return pos[id].x; }).attr("y", function (id) { return pos[id].y - pos[id].h / 2; })
+      .attr("width", 10).attr("height", function (id) { return pos[id].h; }).attr("rx", 2).attr("fill", function (id) { return DML.layerColor(pos[id].l); });
+    svg.append("g").selectAll("text").data(cols).join("text").attr("x", function (c) { return c.x + 5; }).attr("y", 20).attr("text-anchor", "middle").text(function (c) { return m.layerById[c.l].name.replace(" model", ""); });
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var nodes = paths.nodes(), dots = svg.append("g");
+    function spawn() {
+      if (!document.body.contains(host)) return;
+      var p = nodes[Math.floor(Math.random() * nodes.length)], L = p.getTotalLength();
+      var c = dots.append("circle").attr("r", 2.4).attr("fill", p.getAttribute("stroke"));
+      c.transition().duration(1400 + Math.random() * 900).ease(d3.easeCubicInOut)
+        .attrTween("transform", function () { return function (t) { var q = p.getPointAtLength(t * L); return "translate(" + q.x + "," + q.y + ")"; }; })
+        .remove();
+    }
+    clearInterval(host._timer);
+    host._timer = setInterval(spawn, 140);
+  }
+  DML.load().then(function (m) { draw(m); document.addEventListener("themechange", function () { draw(m); }); })
+    .catch(function () { host.style.display = "none"; });
+})();
+</script>
+</body>
+</html>

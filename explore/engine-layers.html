@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="engine-layers">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine layer cake · Data Model Lab</title>
+<meta name="description" content="Follow a report visual down through DAX, the semantic engine, Direct Lake and Delta files.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .band rect.bg { stroke: var(--rule); }
+  .band text.nm { font-weight: 700; font-size: 15px; }
+  .band text.it { font-size: 12px; }
+  .band.lit rect.bg { stroke: var(--accent); stroke-width: 2; }
+  .chipbox rect { fill: var(--bg-raised); stroke: var(--rule-strong); }
+  .chipbox text { font-family: var(--font-mono); font-size: 10.5px; }
+  .chipbox.hot rect { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }
+  .steps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  .steps li { position: relative; padding: 8px 0 8px 34px; border-bottom: 1px solid var(--rule); opacity: .35; transition: opacity .3s; }
+  .steps li.on { opacity: 1; }
+  .steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-sunken); text-align: center; font-size: 12px; line-height: 22px; font-weight: 650; }
+  .steps li.on::before { background: var(--accent); color: var(--accent-ink); }
+  .steps b { display: block; font-size: 13.5px; }
+  .steps span { font-size: 13px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 06</p>
+    <h1>Engine layer cake</h1>
+    <p class="lede">An analytics platform is a stack of engines, each doing one kind of work. Pick a report visual and send its query down the stack to see which layer does what, and exactly which model objects it touches on the way.</p>
+  </header>
+  <div class="viz-controls">
+    <label>Visual <select id="visual"></select></label>
+    <button class="btn btn--primary" type="button" id="run">Trace the query</button>
+    <span class="viz-note" style="margin:0">The sample model is Direct Lake on OneLake.</span>
+  </div>
+  <div class="viz-shell">
+    <div class="viz-stage" id="stage"></div>
+    <aside class="panel" aria-live="polite">
+      <h3 id="vtitle">Query trace</h3>
+      <ol class="steps" id="steps"></ol>
+    </aside>
+  </div>
+  <section class="viz-about prose">
+    <h2>Two directions, two clocks</h2>
+    <p>Data moves <em>up</em> the stack on a schedule: pipelines and notebooks write Delta files, the warehouse loads gold, and the semantic model is reframed to the new version. Questions move <em>down</em> the stack in milliseconds: a visual becomes DAX, DAX becomes storage engine scans, and scans read only the columns they need. Most performance problems are one clock doing the other's job, such as a measure recomputing in DAX what a load could have stored once.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  var model, visuals = [], W = 1000, BH = 92, GAP = 8, svg;
+
+  DML.load().then(function (m) {
+    model = m;
+    m.tables.filter(function (t) { return t.layer === "report"; }).forEach(function (t) {
+      t.columns.forEach(function (c) { visuals.push({ report: t, visual: c }); });
+    });
+    var sel = document.getElementById("visual");
+    visuals.forEach(function (v, i) { var o = document.createElement("option"); o.value = i; o.textContent = v.report.name + " › " + v.visual.name; sel.appendChild(o); });
+    sel.value = visuals.findIndex(function (v) { return v.visual.name === "Sales by category"; });
+    sel.addEventListener("change", function () { draw(); });
+    document.getElementById("run").addEventListener("click", run);
+    draw();
+    document.addEventListener("themechange", draw);
+  }).catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+
+  function analyse(v) {
+    var m = model;
+    var up = (m.colUp[v.visual.id] || []);
+    var measures = up.filter(function (e) { return m.columnById[e.from].table.kind === "measure-table"; }).map(function (e) { return m.columnById[e.from].col; });
+    var fields = up.filter(function (e) { return m.columnById[e.from].table.kind === "semantic-table"; }).map(function (e) { return m.columnById[e.from]; });
+    var tr = m.trace([v.visual.id], { up: true, down: false });
+    var semCols = [], goldCols = [], goldTables = new Set(), silverTables = new Set(), allMeasures = [];
+    tr.cols.forEach(function (id) {
+      var x = m.columnById[id];
+      if (x.table.kind === "semantic-table") semCols.push(x);
+      if (x.table.kind === "measure-table") allMeasures.push(x.col);
+      if (x.table.layer === "gold") { goldCols.push(x); goldTables.add(x.table.name); }
+      if (x.table.layer === "silver") silverTables.add(x.table.name);
+    });
+    var base = allMeasures.filter(function (c) { return /^(CALCULATE \( )?SUM/.test(c.expression); });
+    return { measures: measures, fields: fields, semCols: semCols, goldCols: goldCols, goldTables: Array.from(goldTables), silverTables: Array.from(silverTables), allMeasures: allMeasures, base: base };
+  }
+
+  function stepsFor(v, a) {
+    var mlist = a.measures.map(function (c) { return "[" + c.name + "]"; }).join(", ");
+    var flist = a.fields.map(function (x) { return x.table.name + "[" + x.col.name + "]"; }).join(", ") || "no axis (a card)";
+    var cols = a.semCols.map(function (x) { return x.table.name + "[" + x.col.name + "]"; });
+    return [
+      { id: "consume", t: "Visual asks a question", d: "“" + v.visual.name + "” needs " + mlist + " by " + flist + ". The report sends one DAX query." },
+      { id: "query", t: "Formula engine plans, storage engine scans", d: a.allMeasures.length + " measures resolve to " + a.base.length + " base aggregations (" + a.base.map(function (c) { return c.name; }).join(", ") + "). The storage engine scans those columns in parallel as xmSQL; the formula engine does the arithmetic and time intelligence on the small results." },
+      { id: "semantic", t: "VertiPaq serves the columns", d: cols.length + " columns are needed: " + cols.slice(0, 6).join(", ") + (cols.length > 6 ? "…" : "") + ". In Direct Lake, any not yet in memory are paged in from Delta on first touch (transcoding), then stay warm." },
+      { id: "serve", t: "SQL endpoint stays out of the way", d: "Direct Lake on OneLake reads files directly. Direct Lake on the SQL endpoint would fall back to DirectQuery here if a guardrail or SQL-only security was hit." },
+      { id: "compute", t: "Built hours ago, not now", d: "Those columns were written by loads into " + a.goldTables.join(", ") + ", from " + (a.silverTables.join(", ") || "generated data") + ". Nothing in this layer runs at query time." },
+      { id: "storage", t: "Parquet column chunks", d: "Only the " + a.goldCols.length + " gold columns on the path are read from V-Ordered Parquet. Columns nobody asked for are never touched: that is why wide gold tables are cheap and wide measures are not." }
+    ];
+  }
+
+  function draw() {
+    var m = model, v = visuals[+document.getElementById("visual").value], a = analyse(v);
+    var stage = document.getElementById("stage"); stage.innerHTML = "";
+    var H = m.engine.length * (BH + GAP) + 20;
+    svg = d3.select(stage).append("svg").attr("viewBox", [0, 0, W, H]).attr("role", "img").attr("aria-label", "Layered analytic engine stack");
+    var colorFor = { consume: "report", query: "semantic", semantic: "semantic", serve: "gold", compute: "silver", storage: "bronze" };
+    var touch = {
+      consume: [v.visual.name],
+      query: a.allMeasures.map(function (c) { return c.name; }),
+      semantic: a.semCols.map(function (x) { return x.table.name + "[" + x.col.name + "]"; }),
+      serve: [],
+      compute: a.goldTables,
+      storage: a.goldCols.map(function (x) { return x.table.name + "." + x.col.name; })
+    };
+    var bands = svg.selectAll("g.band").data(m.engine).join("g").attr("class", "band")
+      .attr("transform", function (d, i) { return "translate(10," + (10 + i * (BH + GAP)) + ")"; });
+    bands.append("rect").attr("class", "bg").attr("width", W - 20).attr("height", BH).attr("rx", 10)
+      .attr("fill", function (d) { return d3.color(DML.layerColor(colorFor[d.id])).copy({ opacity: 0.13 }); });
+    bands.append("rect").attr("width", 6).attr("height", BH).attr("rx", 3).attr("fill", function (d) { return DML.layerColor(colorFor[d.id]); });
+    bands.append("text").attr("class", "nm").attr("x", 22).attr("y", 26).text(function (d) { return d.name; });
+    bands.append("text").attr("class", "it t-muted").attr("x", 22).attr("y", 46).text(function (d) { return d.items.join(" · "); });
+    bands.append("text").attr("class", "it").attr("x", 22).attr("y", 66).text(function (d) { return d.does; });
+    // touched objects as chips on the right
+    bands.each(function (d) {
+      var g = d3.select(this), items = touch[d.id] || [], x = W - 30, y = 14, maxX = 420;
+      var shown = items.slice(0, 8);
+      var cg = g.append("g");
+      shown.forEach(function (s) {
+        var label = s.length > 30 ? s.slice(0, 29) + "…" : s;
+        var w = label.length * 6.3 + 14;
+        if (x - w < maxX) { x = W - 30; y += 24; }
+        if (y > BH - 20) return;
+        var c = cg.append("g").attr("class", "chipbox").attr("transform", "translate(" + (x - w) + "," + y + ")");
+        c.append("rect").attr("width", w).attr("height", 19).attr("rx", 5);
+        c.append("text").attr("x", 7).attr("y", 13).text(label);
+        x -= w + 6;
+      });
+      if (items.length > shown.length) g.append("text").attr("class", "it t-muted").attr("x", W - 30).attr("y", BH - 8).attr("text-anchor", "end").text("+ " + (items.length - shown.length) + " more");
+    });
+    svg.append("circle").attr("id", "probe").attr("r", 8).attr("cx", -20).attr("cy", -20).attr("fill", DML.css("--accent"));
+    var steps = stepsFor(v, a);
+    document.getElementById("vtitle").textContent = v.visual.name;
+    document.getElementById("steps").innerHTML = steps.map(function (s) { return "<li data-id=\"" + s.id + "\"><b>" + DML.esc(s.t) + "</b><span>" + DML.esc(s.d) + "</span></li>"; }).join("");
+  }
+
+  function run() {
+    draw();
+    var n = model.engine.length, i = 0;
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var probe = svg.select("#probe").attr("cx", 13).attr("cy", 10 + BH / 2);
+    function step() {
+      if (i >= n) return;
+      var id = model.engine[i].id;
+      svg.selectAll("g.band").classed("lit", function (d) { return d.id === id; });
+      svg.selectAll("g.band").filter(function (d) { return d.id === id; }).selectAll(".chipbox").classed("hot", true);
+      document.querySelectorAll("#steps li").forEach(function (li) { if (li.getAttribute("data-id") === id) li.classList.add("on"); });
+      probe.transition().duration(reduce ? 0 : 500).attr("cy", 10 + i * (BH + GAP) + BH / 2);
+      i++;
+      setTimeout(step, reduce ? 0 : 900);
+    }
+    step();
+  }
+})();
+</script>
+</body>
+</html>

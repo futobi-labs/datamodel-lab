@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="bus-matrix">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bus matrix · Data Model Lab</title>
+<meta name="description" content="Facts against conformed dimensions, as a matrix you can click through.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .cellbg { fill: var(--bg); stroke: var(--rule); cursor: pointer; }
+  .cellbg:hover, .cellbg.sel { fill: var(--bg-sunken); stroke: var(--accent); }
+  .hdr { font-weight: 650; font-size: 13px; }
+  .sub { font-size: 11px; }
+  .mark { pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 05</p>
+    <h1>Bus matrix</h1>
+    <p class="lede">Kimball's planning grid, drawn from the model rather than a spreadsheet. Rows are business processes (facts), columns are the dimensions they share. A full column is a conformed dimension; a half mark is a fact meeting a dimension at a coarser grain.</p>
+  </header>
+  <div class="viz-shell">
+    <div class="viz-stage" id="stage"></div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <h3>Click a cell</h3>
+      <p>Each cell shows how a fact reaches a dimension: the key, the role, whether it is active, and the grain it meets it at.</p>
+      <h4>Marks</h4>
+      <ul>
+        <li><b>Filled circle</b>: active many-to-one at full grain</li>
+        <li><b>Number</b>: role-playing; how many relationships</li>
+        <li><b>Half circle</b>: coarser grain (shrunken dimension)</li>
+        <li><b>Ring</b>: inactive only</li>
+      </ul>
+    </aside>
+  </div>
+  <section class="viz-about prose">
+    <h2>Why draw it</h2>
+    <p>The bus matrix is the cheapest design review there is. Read down a column to see which processes a dimension must serve, which is the list of people who need to agree on its definition. Read across a row to see what a report on that process can be sliced by. The empty cells are the questions you can't answer yet: here, nobody can ask for inventory by salesperson, and budget can't be cut by warehouse.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  var model, sel = null;
+  DML.load().then(function (m) { model = m; draw(); document.addEventListener("themechange", draw); })
+    .catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+
+  function draw() {
+    var m = model;
+    var facts = ["Sales", "Inventory", "Budget"];
+    var dims = ["Date", "Customer", "Product", "Warehouse", "Salesperson"];
+    var sem = {}; m.tables.forEach(function (t) { if (t.layer === "semantic") sem[t.name] = t; });
+    var LW = 300, CW = 118, RH = 78, TOP = 70, W = LW + dims.length * CW + 20, H = TOP + facts.length * RH + 70;
+    var stage = document.getElementById("stage"); stage.innerHTML = "";
+    var svg = d3.select(stage).append("svg").attr("viewBox", [0, 0, W, H]).attr("role", "img").attr("aria-label", "Enterprise bus matrix");
+    dims.forEach(function (d, j) {
+      var used = facts.filter(function (f) { return m.relationships.some(function (r) { return r.fact === f && r.dim === d; }); }).length;
+      var x = LW + j * CW + CW / 2;
+      svg.append("text").attr("class", "hdr").attr("x", x).attr("y", 26).attr("text-anchor", "middle").text(d);
+      svg.append("text").attr("class", "sub t-muted").attr("x", x).attr("y", 44).attr("text-anchor", "middle").text(used + " of " + facts.length + " facts");
+      svg.append("rect").attr("x", LW + j * CW + 16).attr("y", 52).attr("height", 4).attr("rx", 2).attr("width", (CW - 32) * used / facts.length).attr("fill", DML.layerColor("semantic"));
+    });
+    facts.forEach(function (f, i) {
+      var g = m.tableById[sem[f].source_table], y = TOP + i * RH;
+      svg.append("text").attr("class", "hdr").attr("x", 12).attr("y", y + 30).text(f + "  ·  " + g.name);
+      svg.append("text").attr("class", "sub t-muted").attr("x", 12).attr("y", y + 48).text(g.grain);
+      dims.forEach(function (d, j) {
+        var rels = m.relationships.filter(function (r) { return r.fact === f && r.dim === d; });
+        var x = LW + j * CW, cx = x + CW / 2, cy = y + RH / 2;
+        svg.append("rect").attr("class", "cellbg" + (sel && sel[0] === f && sel[1] === d ? " sel" : "")).attr("x", x + 4).attr("y", y + 4).attr("width", CW - 8).attr("height", RH - 8).attr("rx", 8)
+          .on("click", function () { sel = [f, d]; draw(); detail(f, d, rels); })
+          .on("mousemove", function (ev) { DML.tip.show("<b>" + f + " × " + d + "</b><br>" + (rels.length ? rels.map(function (r) { return DML.esc(r.from + " → " + r.to) + (r.active ? "" : " (inactive)"); }).join("<br>") : "No relationship"), ev); })
+          .on("mouseleave", DML.tip.hide);
+        if (!rels.length) return;
+        var active = rels.filter(function (r) { return r.active; });
+        var coarse = rels.some(function (r) { return r.cardinality === "*:*" || r.note; });
+        var c = DML.layerColor("gold");
+        if (!active.length) {
+          svg.append("circle").attr("class", "mark").attr("cx", cx).attr("cy", cy).attr("r", 13).attr("fill", "none").attr("stroke", c).attr("stroke-width", 2.5);
+        } else if (coarse) {
+          svg.append("circle").attr("class", "mark").attr("cx", cx).attr("cy", cy).attr("r", 13).attr("fill", "none").attr("stroke", c).attr("stroke-width", 2);
+          svg.append("path").attr("class", "mark").attr("d", d3.arc()({ innerRadius: 0, outerRadius: 13, startAngle: Math.PI, endAngle: 2 * Math.PI })).attr("transform", "translate(" + cx + "," + cy + ") rotate(90)").attr("fill", c);
+        } else {
+          svg.append("circle").attr("class", "mark").attr("cx", cx).attr("cy", cy).attr("r", 13).attr("fill", c);
+        }
+        if (rels.length > 1) {
+          svg.append("text").attr("class", "mark sub").attr("x", cx + 18).attr("y", cy - 10).text("×" + rels.length);
+        }
+        var roles = rels.map(function (r) { return r.role; }).filter(Boolean);
+        if (roles.length) svg.append("text").attr("class", "mark sub t-muted").attr("x", cx).attr("y", y + RH - 10).attr("text-anchor", "middle").text(roles.length > 1 ? roles.length + " roles" : roles[0]);
+      });
+    });
+  }
+
+  function detail(f, d, rels) {
+    var p = document.getElementById("panel");
+    var h = '<p class="eyebrow">' + DML.esc(f) + " × " + DML.esc(d) + "</p>";
+    if (!rels.length) {
+      p.innerHTML = h + "<h3>No relationship</h3><p>" + DML.esc(f) + " can't be sliced by " + DML.esc(d) + ". If someone asks for it, the answer is a new foreign key at load time, an allocation rule, or an honest “not at this grain”.</p>";
+      return;
+    }
+    h += "<h3>" + rels.length + " relationship" + (rels.length > 1 ? "s" : "") + "</h3>";
+    rels.forEach(function (r) {
+      h += '<dl class="kv" style="margin-top:10px"><dt>Key</dt><dd><code>' + DML.esc(r.fact + "[" + r.from + "] → " + r.dim + "[" + r.to + "]") + "</code></dd><dt>Cardinality</dt><dd>" + (r.cardinality === "*:1" ? "Many-to-one" : "Many-to-many") + "</dd><dt>Active</dt><dd>" + (r.active ? "Yes" : "No") + "</dd>" + (r.role ? "<dt>Role</dt><dd>" + DML.esc(r.role) + "</dd>" : "") + "</dl>" + (r.note ? "<p>" + DML.esc(r.note) + "</p>" : "");
+    });
+    p.innerHTML = h + '<p><a href="star-schema.html">See it in the star schema explorer →</a></p>';
+  }
+})();
+</script>
+</body>
+</html>
