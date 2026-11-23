@@ -335,7 +335,7 @@
       }
     }
     ORDER.forEach(function (l) {
-      var target = l === "source" ? ZONE.source[0] + (ZONE.source[1] - ZONE.source[0]) * 0.9 : settleU(l) + 0.012, best = 0;
+      var target = ZONE[l][0] + (ZONE[l][1] - ZONE[l][0]) * (l === "source" ? 0.9 : 0.72), best = 0;
       sliceU.forEach(function (u, i) { if (Math.abs(u - target) < Math.abs(sliceU[best] - target)) best = i; });
       LABEL[l] = best;
       for (var i = 0; i < NS; i++) if (sliceU[i] >= ZONE[l][0]) { TITLE[l] = i; break; }
@@ -728,7 +728,7 @@
   });
   function dive(l) {
     stopFollow(false); flying = false; syncButtons();
-    cam.ut = Math.max(0.004, labelU(l) - 1.4 / LZ); cam.dyaw = 0; cam.dpitch = 0; cam.ppx = 0; cam.ppy = 0;
+    cam.ut = Math.max(0.004, labelU(l) - 0.9 / LZ); cam.dyaw = 0; cam.dpitch = 0; cam.ppx = 0; cam.ppy = 0;
   }
   function overview() { stopFollow(false); flying = false; syncButtons(); cam.ut = -0.62; cam.dyaw = 0; cam.dpitch = 0; cam.ppx = 0; cam.ppy = 0; }
   function togglePause() { paused = !paused; syncButtons(); }
