@@ -3367,6 +3367,45 @@
    "note": "Kept inactive; region exists in both Customer and Salesperson and the business hasn't chosen one."
   }
  ],
+ "hierarchies": [
+  {
+   "table": "Date",
+   "name": "Calendar",
+   "levels": [
+    "Fiscal Year",
+    "Quarter",
+    "Month",
+    "Date"
+   ]
+  },
+  {
+   "table": "Product",
+   "name": "Product",
+   "levels": [
+    "Category",
+    "Subcategory",
+    "Product"
+   ]
+  },
+  {
+   "table": "Customer",
+   "name": "Geography",
+   "levels": [
+    "Region",
+    "State",
+    "City",
+    "Customer"
+   ]
+  },
+  {
+   "table": "Salesperson",
+   "name": "Sales team",
+   "levels": [
+    "Team",
+    "Salesperson"
+   ]
+  }
+ ],
  "engine": [
   {
    "id": "consume",

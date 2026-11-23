@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="anatomy">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data anatomy · Data Model Lab</title>
+<meta name="description" content="A living cross-section of the lakehouse: sources as skin, bronze as fat, silver as muscle, gold as bone, the semantic model as organs, with data cells flowing inward through every layer.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  /* The specimen is always viewed on a dark light-box, in either theme. */
+  .anat-stage {
+    position: relative; height: 78vh; min-height: 540px; border-radius: 12px; overflow: hidden;
+    background: radial-gradient(ellipse at 45% 50%, #1a1216 0%, #0b0709 62%, #050304 100%);
+    border: 1px solid var(--rule); cursor: crosshair; user-select: none; -webkit-user-select: none;
+  }
+  .anat-stage:fullscreen { height: 100vh; border-radius: 0; }
+  .anat-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .anat-stage.is-grab { cursor: grabbing; }
+  .hud { position: absolute; color: #eadfd6; font: 12px/1.4 var(--font-sans); pointer-events: none; text-shadow: 0 1px 2px #000; }
+  .hud--depth { left: 12px; top: 12px; pointer-events: auto; }
+  .hud--depth h5 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: #9b8f88; font-weight: 600; }
+  .gauge { list-style: none; margin: 0; padding: 0; border-left: 2px solid #3a2c30; }
+  .gauge button {
+    all: unset; cursor: pointer; display: grid; grid-template-columns: 14px auto; gap: 2px 8px; align-items: center;
+    padding: 4px 10px 4px 8px; margin-left: -2px; border-left: 2px solid transparent; border-radius: 0 6px 6px 0;
+    font-size: 12.5px; color: #cdbfb6;
+  }
+  .gauge button:hover, .gauge button:focus-visible { background: rgba(255,255,255,.06); outline: none; }
+  .gauge button.on { border-left-color: currentColor; background: rgba(255,255,255,.08); color: #fff; }
+  .gauge .sw { width: 10px; height: 10px; border-radius: 50%; grid-row: span 2; box-shadow: 0 0 8px currentColor; }
+  .gauge b { font-weight: 650; }
+  .gauge small { grid-column: 2; font-size: 11px; color: #9b8f88; margin-top: -2px; }
+  .hud--mag { right: 14px; top: 12px; text-align: right; }
+  .hud--mag .big { font: 600 26px/1 var(--font-mono); color: #fff; letter-spacing: -.02em; }
+  .hud--mag .sub { color: #b8aaa1; margin-top: 4px; }
+  .hud--ecg { left: 12px; bottom: 12px; }
+  .hud--ecg canvas { width: 200px; height: 46px; display: block; border: 1px solid #3a2c30; border-radius: 6px; background: rgba(0,0,0,.35); }
+  .hud--ecg span { display: block; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #9b8f88; margin-bottom: 4px; }
+  .hud--stats { right: 14px; bottom: 12px; text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: #cdbfb6; }
+  .hud--stats b { color: #fff; font-weight: 500; }
+  .hud--hint { left: 50%; transform: translateX(-50%); bottom: 12px; font-size: 11.5px; color: #8d817a; white-space: nowrap; }
+  .hud--follow { left: 50%; top: 12px; transform: translateX(-50%); background: rgba(0,0,0,.55); border: 1px solid #5a3a40; border-radius: 999px; padding: 4px 12px; color: #ffd7d7; display: none; }
+  .hud--follow.on { display: block; }
+  @media (max-width: 760px) { .hud--hint, .hud--ecg { display: none; } .gauge small { display: none; } }
+
+  .journal { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+  .journal li { position: relative; padding: 6px 0 6px 16px; border-bottom: 1px solid var(--rule); }
+  .journal li::before { content: ""; position: absolute; left: 0; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-3)); }
+  .journal code { font-size: 11.5px; }
+  .journal .tx { display: block; color: var(--ink-3); font-size: 12px; }
+  .mapping { list-style: none; padding: 0; margin: 8px 0; }
+  .mapping li { padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; color: var(--ink-2); }
+  .mapping b { color: var(--ink); }
+  .mapping .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .anat-table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  .anat-table th, .anat-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .anat-table th { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+  .viz-controls input[type="range"] { width: 110px; }
+  .btn.is-on { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 07</p>
+    <h1>Data anatomy</h1>
+    <p class="lede">A cross-section through a living lakehouse. Sources are the skin, bronze is fat, silver is muscle, gold is bone and the semantic model is the organs, with reports as the nerve core. Every glowing cell is a column value travelling inward along its real lineage, changing shape each time a transform touches it.</p>
+  </header>
+  <div class="viz-controls">
+    <button class="btn btn--primary" type="button" id="pump">Pump a load</button>
+    <button class="btn" type="button" id="follow">Follow a cell</button>
+    <button class="btn is-on" type="button" id="lens" aria-pressed="true">Lens: on</button>
+    <label>Scan <select id="scan"><option value="dissect">Dissection</option><option value="mri">MRI</option></select></label>
+    <label>Flow <input type="range" id="speed" min="0" max="3" step="0.1" value="1"></label>
+    <button class="btn" type="button" id="pause">Pause</button>
+    <button class="btn" type="button" id="reset">Reset view</button>
+    <button class="btn" type="button" id="full">Full screen</button>
+  </div>
+  <div class="viz-shell">
+    <div class="anat-stage" id="stage">
+      <canvas id="cv" role="img" aria-label="Animated cross-section of the data platform drawn as layers of anatomy, with data cells flowing from the outer skin of source systems inward to the semantic model organs and the report nerve core. The panel beside it describes whatever you select."></canvas>
+      <div class="hud hud--depth"><h5>Depth</h5><ul class="gauge" id="gauge"></ul></div>
+      <div class="hud hud--mag"><div class="big" id="mag">×1.0</div><div class="sub" id="depthname">Whole specimen</div></div>
+      <div class="hud hud--follow" id="followtag">Following one cell · drag or scroll to let go</div>
+      <div class="hud hud--ecg"><span>Arrivals at the core</span><canvas id="ecg" width="400" height="92"></canvas></div>
+      <div class="hud hud--stats" id="stats"></div>
+      <div class="hud hud--hint">Scroll to zoom · drag to pan · move the mouse to swell a layer · click any structure to dissect it</div>
+    </div>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+  <section class="viz-about prose">
+    <h2>Reading the specimen</h2>
+    <p>The metaphor is not decoration. Each tissue does the same job its layer does, and the order is the order data travels: from the surface that touches the outside world, inward to the organs that do the work.</p>
+    <table class="anat-table">
+      <thead><tr><th>Tissue</th><th>Layer</th><th>Why it fits</th></tr></thead>
+      <tbody id="maptable"></tbody>
+    </table>
+    <h2>What moves, and what changes it</h2>
+    <p>Vessels are the column lineage in the sample model, one vessel per column-to-column edge. A cell entering a vessel follows that edge, then picks one of the edges leaving the column it lands on, so flows thicken where many columns converge, like <code>fact_sales.net_amount</code>, and thin out where columns are dropped. Pass-through and rename edges leave a cell as it is. Real transforms, such as a cast, a surrogate key lookup, an SCD2 row hash or a DAX measure, flash at the joint and change the cell's shape: jagged raw specks in the skin, droplets in fat, smooth discs in muscle, crystals in bone, glowing orbs in the organs and sparks in the nerves.</p>
+    <p>Pump a load to send one batch through every source at once, the way a scheduled pipeline does. Follow a cell to ride along with a single value and read its journal in the panel. Click any structure to dissect it: everything outside its lineage goes dark, and cells only travel the paths that feed it.</p>
+    <h2>Two honest caveats</h2>
+    <p>The cells are illustrative, not row counts: the sample model has structure but no data. And in a real platform the outer layers move on a schedule while the inner ones answer questions in milliseconds. The <a href="semantic-engine.html">semantic engine</a> exploration slows that second clock down so you can watch it.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------ vocabulary
+  var ORDER = ["source", "bronze", "silver", "gold", "semantic", "report"]; // outer -> inner
+  var TISSUE = {
+    source:   { name: "Skin",   latin: "Epidermis & dermis",      tone: "#d6a088", why: "The surface that touches the outside world. Owned by someone else; you only sense it and copy what it feels.", w: 0.10 },
+    bronze:   { name: "Fat",    latin: "Subcutaneous adipose",    tone: "#e6c26c", why: "Raw reserve. Stores everything it absorbs, unprocessed and source-shaped, in case it is needed later.", w: 0.13 },
+    silver:   { name: "Muscle", latin: "Skeletal muscle",         tone: "#b3343f", why: "Worked tissue. Cleaned, typed and de-duplicated fibers, aligned to the business entities they move.", w: 0.19 },
+    gold:     { name: "Bone",   latin: "Cortical & trabecular bone", tone: "#ece2cc", why: "The skeleton. Rigid, declared grain, surrogate keys. Everything else hangs off it and it rarely changes shape.", w: 0.13 },
+    semantic: { name: "Organs", latin: "Viscera",                 tone: "#8c2c58", why: "Where the body's real work happens: relationships, hierarchies and measures. The measures table is the heart.", w: 0.30 },
+    report:   { name: "Nerves", latin: "Nerve core",              tone: "#f2e46a", why: "The signals. Every visual is a nerve ending that asks the organs a question and lights up with the answer.", w: 0.15 }
+  };
+  var ROLE = { source: "Receptor", raw: "Fat lobule", entity: "Muscle fascicle", dimension: "Osteon", fact: "Load-bearing osteon", "semantic-table": "Organ", "measure-table": "Heart", report: "Ganglion" };
+  var QUIET = { "pass-through": 1, "rename": 1 };
+
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var stage = document.getElementById("stage"), cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  var ecgCv = document.getElementById("ecg"), ecg = ecgCv.getContext("2d");
+  var panel = document.getElementById("panel");
+  var W = 800, H = 600, DPR = Math.min(2, window.devicePixelRatio || 1);
+  var RY = 400, RX = 470;               // world radii of the specimen
+  var model, tables = [], cols = [], edges = [], tableById = {}, colById = {};
+  var weights = {}, targetW = {};
+  var transform = d3.zoomIdentity, zoom, sel = d3.select(cv);
+  var particles = [], sparks = [], labelsShown = [];
+  var T = 0, last = 0, paused = false, speed = 1, lensOn = true, scan = "dissect";
+  var hover = null, selection = null, follow = null, followLeft = 0;
+  var stats = { delivered: 0, transforms: 0, organs: 0 };
+  var ecgBuf = new Float32Array(200), ecgHead = 0, ecgAcc = 0, beat = 0;
+  var mouse = null, lensLayer = null, lensCandidate = null, lensSince = 0;
+  var LC = {}, TC = {};                 // layer cell colors, tissue colors
+
+  ORDER.forEach(function (l) { weights[l] = TISSUE[l].w; targetW[l] = TISSUE[l].w; });
+
+  // ------------------------------------------------------------ colors
+  function brightOnDark(c) {
+    var h = d3.hsl(c); if (!isFinite(h.h)) h.h = 0;
+    if (h.l < 0.62) h.l = 0.62; if (h.s < 0.35 && h.s > 0.05) h.s = 0.35;
+    return h.formatHex();
+  }
+  function paintColors() {
+    ORDER.forEach(function (l) {
+      LC[l] = brightOnDark(DML.layerColor(l));
+      TC[l] = d3.interpolateRgb(TISSUE[l].tone, DML.layerColor(l))(0.28);
+    });
+  }
+
+  // ------------------------------------------------------------ geometry
+  function bounds() {
+    // returns {layer: [outerN, innerN]} in normalized radius 0..1
+    var sum = 0, b = {}, r = 1;
+    ORDER.forEach(function (l) { sum += weights[l]; });
+    ORDER.forEach(function (l) { var t = weights[l] / sum; b[l] = [r, Math.max(0, r - t)]; r -= t; });
+    b.report[1] = 0;
+    return b;
+  }
+  var B = bounds();
+  function wob(th) {
+    var w = 1 + 0.024 * Math.sin(3 * th + 0.4 + T * 0.23) + 0.014 * Math.sin(5 * th - T * 0.37) + 0.008 * Math.sin(11 * th + 1.3 + T * 0.11);
+    var br = reduceMotion ? 1 : 1 + 0.007 * Math.sin(T * 1.05);
+    return w * br;
+  }
+  function P(th, rn) { var w = wob(th) * rn; return [Math.cos(th) * RX * w, Math.sin(th) * RY * w]; }
+  function rAt(layer, depth) { var b = B[layer]; return b[0] - depth * (b[0] - b[1]); }
+  function thick(layer) { return (B[layer][0] - B[layer][1]) * RY; }
+  function toNorm(x, y) {
+    var th = Math.atan2(y / RY, x / RX);
+    var rn = Math.sqrt((x / RX) * (x / RX) + (y / RY) * (y / RY)) / wob(th);
+    return { th: th, rn: rn };
+  }
+  function layerAtNorm(rn) {
+    if (rn > 1.0) return null;
+    for (var i = 0; i < ORDER.length; i++) { var b = B[ORDER[i]]; if (rn <= b[0] && rn >= b[1]) return ORDER[i]; }
+    return "report";
+  }
+  function circMean(angles, wts) {
+    var s = 0, c = 0;
+    angles.forEach(function (a, i) { var w = wts ? wts[i] : 1; s += Math.sin(a) * w; c += Math.cos(a) * w; });
+    return Math.atan2(s, c);
+  }
+  function angDiff(a, b) { var d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; }
+
+  // seeded random so the specimen looks the same on every visit
+  var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+
+  // ------------------------------------------------------------ layout from the model
+  function layout(m) {
+    m.tables.forEach(function (t) {
+      var o = { id: t.id, t: t, layer: t.layer, kind: t.kind, cols: [], th: 0, arc: 0.2, depth: 0.5 };
+      tables.push(o); tableById[t.id] = o;
+      t.columns.forEach(function (c) {
+        var co = { id: c.id, c: c, tab: o, layer: t.layer, th: 0, depth: 0.5, off: [0, 0], down: [], up: [] };
+        o.cols.push(co); cols.push(co); colById[c.id] = co;
+      });
+    });
+    m.columnLineage.forEach(function (e) {
+      var a = colById[e.from], b = colById[e.to];
+      var eo = { i: e.i, from: a, to: b, tf: e.transform, quiet: !!QUIET[e.transform], p0: [0, 0], p1: [0, 0], p2: [0, 0], len: 1, hot: 0 };
+      edges.push(eo); a.down.push(eo); b.up.push(eo);
+    });
+    // which columns eventually reach a report (so followed cells go somewhere)
+    var memo = {};
+    function reach(c) {
+      if (memo[c.id] !== undefined) return memo[c.id];
+      memo[c.id] = false;
+      var r = c.layer === "report" || c.down.some(function (e) { return reach(e.to); });
+      return (memo[c.id] = r);
+    }
+    cols.forEach(function (c) { c.reach = reach(c); });
+
+    function tablesIn(l) { return tables.filter(function (t) { return t.layer === l; }); }
+    function linked(t, dir) {
+      var out = {};
+      t.cols.forEach(function (c) { (dir === "down" ? c.down : c.up).forEach(function (e) { var o = (dir === "down" ? e.to : e.from).tab; if (o !== t) out[o.id] = (out[o.id] || 0) + 1; }); });
+      return Object.keys(out).map(function (k) { return { t: tableById[k], n: out[k] }; });
+    }
+    // 1. organs evenly around the body, facts next to their dimensions
+    var organOrder = ["Sales", "Customer", "Salesperson", "Date", "Budget", "Product", "Inventory", "Warehouse"];
+    var organs = tablesIn("semantic").filter(function (t) { return t.kind !== "measure-table"; });
+    organs.sort(function (a, b) { var ia = organOrder.indexOf(a.t.name), ib = organOrder.indexOf(b.t.name); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+    organs.forEach(function (t, i) { t.th = -Math.PI / 2 + i * 2 * Math.PI / organs.length + 0.2; t.depth = 0.36; });
+    var heart = tablesIn("semantic").filter(function (t) { return t.kind === "measure-table"; })[0];
+    function meanOf(list, fallback) {
+      if (!list.length) return fallback;
+      return circMean(list.map(function (x) { return x.t.th; }), list.map(function (x) { return x.n; }));
+    }
+    if (heart) {
+      // the heart sits deep, in the gap between two organs nearest the facts it reads
+      var want = meanOf(linked(heart, "up").filter(function (x) { return x.t.layer === "semantic"; }), 0), bestA = want, bestD = 9;
+      organs.forEach(function (o) { var mid = o.th + Math.PI / organs.length, d = Math.abs(angDiff(mid, want)); if (d < bestD) { bestD = d; bestA = mid; } });
+      heart.th = bestA; heart.depth = 0.74;
+    }
+    tablesIn("report").forEach(function (t) { t.th = meanOf(linked(t, "up"), 0); t.depth = 0.5; });
+    // 2. gold sits under the organ it feeds
+    tablesIn("gold").forEach(function (t) {
+      var org = organs.filter(function (o) { return o.t.source_table === t.id; })[0];
+      t.th = org ? org.th : meanOf(linked(t, "down").filter(function (x) { return x.t.layer === "semantic"; }), 0);
+    });
+    // 3. outer layers sit above whatever they feed
+    ["silver", "bronze", "source"].forEach(function (l) {
+      tablesIn(l).forEach(function (t) {
+        var d = linked(t, "down").filter(function (x) { return x.t.layer !== l; });
+        t.th = meanOf(d, rnd() * 6.28);
+      });
+    });
+    // 4. de-overlap within each ring
+    ORDER.forEach(function (l) {
+      var list = tablesIn(l).filter(function (t) { return t.kind !== "measure-table"; });
+      if (l === "semantic" || l === "report") { list.forEach(function (t) { t.arc = 0; }); spread(list, l === "report" ? 2.4 : 0.7); return; }
+      list.forEach(function (t) { t.arc = Math.max(0.12, Math.min(0.5, t.cols.length * 0.03)); });
+      var need = d3.sum(list, function (t) { return t.arc + 0.05; });
+      if (need > Math.PI * 1.9) { var s = Math.PI * 1.9 / need; list.forEach(function (t) { t.arc *= s; }); }
+      spread(list, null);
+    });
+    function spread(list, fixedGap) {
+      for (var it = 0; it < 300; it++) {
+        list.sort(function (a, b) { return a.th - b.th; });
+        var moved = false;
+        for (var i = 0; i < list.length; i++) {
+          var a = list[i], b = list[(i + 1) % list.length];
+          if (a === b) break;
+          var gap = fixedGap != null ? fixedGap : (a.arc + b.arc) / 2 + 0.05;
+          var d = angDiff(a.th, b.th);
+          if (d < gap) { var push = (gap - d) / 2 + 0.001; a.th -= push; b.th += push; moved = true; }
+        }
+        list.forEach(function (t) { t.th = Math.atan2(Math.sin(t.th), Math.cos(t.th)); });
+        if (!moved) break;
+      }
+    }
+    // 5. columns inside each table
+    tables.forEach(function (t) {
+      var n = t.cols.length;
+      t.cols.forEach(function (c, j) {
+        if (t.layer === "semantic" || t.layer === "report") {
+          // sunflower inside the organ or ganglion
+          var a = j * 2.39996, rr = Math.sqrt((j + 0.6) / (n + 0.6));
+          c.th = t.th; c.depth = t.depth; c.off = [Math.cos(a) * rr, Math.sin(a) * rr];
+        } else {
+          c.th = t.th + (n > 1 ? (j / (n - 1) - 0.5) * t.arc : 0);
+          c.depth = 0.5 + ((j % 3) - 1) * 0.13;
+        }
+      });
+    });
+    // texture elements, in polar coordinates so they ride the tissue
+    makeTexture();
+  }
+
+  function organR(t) {
+    if (t.kind === "measure-table") return thick("semantic") * 0.23;
+    if (t.layer === "report") return thick("report") * 0.42;
+    return thick("semantic") * (0.16 + Math.min(0.12, t.cols.length * 0.009));
+  }
+  function tableCenter(t) { return P(t.th, rAt(t.layer, t.depth)); }
+  function colPos(c) {
+    var t = c.tab;
+    if (t.layer === "semantic" || t.layer === "report") {
+      var p = tableCenter(t), r = organR(t) * 0.78 * (t.kind === "measure-table" ? heartScale() : 1);
+      return [p[0] + c.off[0] * r, p[1] + c.off[1] * r];
+    }
+    return P(c.th, rAt(c.layer, c.depth));
+  }
+  function heartScale() {
+    if (reduceMotion) return 1;
+    var ph = (T * 1.15) % 1, s = 0;
+    s += Math.exp(-Math.pow((ph - 0.1) / 0.045, 2)) * 0.07;
+    s += Math.exp(-Math.pow((ph - 0.28) / 0.05, 2)) * 0.04;
+    return 1 + s + beat * 0.12;
+  }
+
+  var TEX = {};
+  function makeTexture() {
+    seed = 11;
+    function many(n, f) { var a = []; for (var i = 0; i < n; i++) a.push(f(i)); return a; }
+    TEX.source = many(150, function () { return { th: rnd() * 6.283, d: rnd() * 0.85, s: 0.5 + rnd() }; });
+    TEX.bronze = many(300, function () { return { th: rnd() * 6.283, d: 0.05 + rnd() * 0.9, s: 0.5 + rnd() * 0.9 }; });
+    TEX.silver = many(520, function () { return { th: rnd() * 6.283, d: 0.04 + rnd() * 0.92, s: 0.6 + rnd() * 0.8, r: (rnd() - 0.5) * 0.5 }; });
+    TEX.gold = many(260, function () { return { th: rnd() * 6.283, d: 0.18 + rnd() * 0.64, s: 0.4 + rnd() }; });
+    TEX.semantic = many(140, function () { return { th: rnd() * 6.283, d: rnd(), s: 0.4 + rnd() }; });
+    TEX.fascia = many(5, function (i) { return { d: 0.2 + i * 0.15 }; });
+  }
+
+  // ------------------------------------------------------------ canvas setup
+  function resize() {
+    var r = stage.getBoundingClientRect();
+    W = Math.max(320, r.width); H = Math.max(320, r.height);
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  }
+  function fitTransform() {
+    var k = Math.min(W / (RX * 2 * 1.42), H / (RY * 2 * 1.12));
+    var cx = W < 700 ? W / 2 : W * 0.44;
+    return d3.zoomIdentity.translate(cx, H / 2).scale(k);
+  }
+
+  // ------------------------------------------------------------ drawing
+  function ringPath(outerN, innerN) {
+    var n = 180, i, th, p;
+    ctx.beginPath();
+    for (i = 0; i <= n; i++) { th = i / n * 2 * Math.PI; p = P(th, outerN); if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }
+    ctx.closePath();
+    if (innerN > 0.001) {
+      for (i = n; i >= 0; i--) { th = i / n * 2 * Math.PI; p = P(th, innerN); if (i === n) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); }
+      ctx.closePath();
+    }
+  }
+  function boundaryPath(rn) {
+    var n = 180; ctx.beginPath();
+    for (var i = 0; i <= n; i++) { var th = i / n * 2 * Math.PI, p = P(th, rn); if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }
+    ctx.closePath();
+  }
+  function blobPath(cx, cy, r, phase, wobAmt) {
+    var n = 48; ctx.beginPath();
+    for (var i = 0; i <= n; i++) {
+      var a = i / n * 2 * Math.PI;
+      var rr = r * (1 + wobAmt * Math.sin(3 * a + phase) + wobAmt * 0.6 * Math.sin(5 * a - phase * 1.3));
+      var x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 0.86;
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  }
+  function alphaFor(layer) {
+    if (!selection) return 1;
+    return selection.layers.has(layer) ? 1 : 0.45;
+  }
+  function inSel(t) { return !selection || selection.tables.has(t.id); }
+
+  function drawTissue(k) {
+    var lw = 1 / k;
+    ORDER.forEach(function (l) {
+      var b = B[l], tk = thick(l);
+      ctx.save();
+      ringPath(b[0], b[1]);
+      var base = d3.color(TC[l]);
+      ctx.fillStyle = base.darker(l === "gold" ? 0.15 : 0.6).formatRgb();
+      ctx.fill("evenodd");
+      ctx.clip("evenodd");
+      ctx.globalAlpha = alphaFor(l);
+      if (l === "source") {
+        // dermis gradient band and follicles
+        ctx.strokeStyle = base.brighter(0.4).formatRgb(); ctx.lineWidth = tk * 0.18; boundaryPath(b[0] - (b[0] - b[1]) * 0.12); ctx.globalAlpha *= 0.5; ctx.stroke(); ctx.globalAlpha = alphaFor(l);
+        ctx.strokeStyle = base.darker(1.2).formatRgb(); ctx.lineWidth = Math.max(lw, tk * 0.012);
+        ctx.beginPath();
+        TEX.source.forEach(function (e) {
+          var p1 = P(e.th, rAt(l, 0.0)), p2 = P(e.th + 0.01, rAt(l, 0.25 + e.d * 0.7));
+          ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]);
+        });
+        ctx.stroke();
+        ctx.fillStyle = base.darker(0.8).formatRgb(); ctx.beginPath();
+        TEX.source.forEach(function (e) { var p = P(e.th + 0.012, rAt(l, 0.25 + e.d * 0.7)); ctx.moveTo(p[0] + tk * 0.04, p[1]); ctx.arc(p[0], p[1], tk * 0.04 * e.s, 0, 6.283); });
+        ctx.fill();
+      } else if (l === "bronze") {
+        ctx.fillStyle = base.brighter(0.35).formatRgb(); ctx.strokeStyle = base.darker(0.9).formatRgb(); ctx.lineWidth = Math.max(lw, tk * 0.012);
+        ctx.beginPath();
+        TEX.bronze.forEach(function (e) { var p = P(e.th, rAt(l, e.d)), r = tk * 0.075 * e.s; ctx.moveTo(p[0] + r, p[1]); ctx.arc(p[0], p[1], r, 0, 6.283); });
+        ctx.fill(); ctx.stroke();
+      } else if (l === "silver") {
+        ctx.strokeStyle = base.brighter(0.5).formatRgb(); ctx.lineWidth = Math.max(lw, tk * 0.018); ctx.lineCap = "round";
+        ctx.beginPath();
+        TEX.silver.forEach(function (e) {
+          var p = P(e.th, rAt(l, e.d)), len = tk * 0.14 * e.s, a = e.th + Math.PI / 2 + e.r;
+          ctx.moveTo(p[0] - Math.cos(a) * len, p[1] - Math.sin(a) * len); ctx.lineTo(p[0] + Math.cos(a) * len, p[1] + Math.sin(a) * len);
+        });
+        ctx.globalAlpha *= 0.55; ctx.stroke(); ctx.globalAlpha = alphaFor(l);
+        ctx.strokeStyle = base.darker(1.4).formatRgb(); ctx.lineWidth = Math.max(lw, tk * 0.01); ctx.setLineDash([tk * 0.2, tk * 0.08]);
+        TEX.fascia.forEach(function (f) { boundaryPath(rAt(l, f.d)); ctx.stroke(); });
+        ctx.setLineDash([]);
+      } else if (l === "gold") {
+        ctx.strokeStyle = base.brighter(0.2).formatRgb(); ctx.lineWidth = tk * 0.16;
+        boundaryPath(b[0] - (b[0] - b[1]) * 0.08); ctx.stroke(); boundaryPath(b[1] + (b[0] - b[1]) * 0.08); ctx.stroke();
+        ctx.fillStyle = base.darker(1.5).formatRgb(); ctx.beginPath();
+        TEX.gold.forEach(function (e) { var p = P(e.th, rAt(l, e.d)), r = tk * 0.045 * e.s; ctx.moveTo(p[0] + r, p[1]); ctx.ellipse(p[0], p[1], r * 1.4, r, e.th, 0, 6.283); });
+        ctx.globalAlpha *= 0.55; ctx.fill(); ctx.globalAlpha = alphaFor(l);
+      } else if (l === "semantic") {
+        var g = ctx.createRadialGradient(0, 0, rAt(l, 1) * RY, 0, 0, rAt(l, 0) * RX);
+        g.addColorStop(0, base.darker(1.6).formatRgb()); g.addColorStop(1, base.darker(0.4).formatRgb());
+        ctx.fillStyle = g; ctx.fillRect(-RX * 1.1, -RY * 1.1, RX * 2.2, RY * 2.2);
+        ctx.fillStyle = base.brighter(0.3).formatRgb(); ctx.globalAlpha *= 0.25; ctx.beginPath();
+        TEX.semantic.forEach(function (e) { var p = P(e.th, rAt(l, e.d)), r = tk * 0.02 * e.s; ctx.moveTo(p[0] + r, p[1]); ctx.arc(p[0], p[1], r, 0, 6.283); });
+        ctx.fill(); ctx.globalAlpha = alphaFor(l);
+      } else if (l === "report") {
+        // grey-matter butterfly of a spinal cord, because why not
+        var rc = rAt(l, 0) * RY;
+        ctx.fillStyle = base.darker(2.2).formatRgb(); ctx.fillRect(-rc * 2, -rc * 2, rc * 4, rc * 4);
+        ctx.fillStyle = d3.color(LC.report).copy({ opacity: 0.12 }).formatRgb();
+        ctx.beginPath();
+        [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (q) {
+          ctx.moveTo(0, 0);
+          ctx.bezierCurveTo(q[0] * rc * 0.2, q[1] * rc * 0.9, q[0] * rc * 0.95, q[1] * rc * 0.75, q[0] * rc * 0.55, q[1] * rc * 0.1);
+          ctx.lineTo(0, 0);
+        });
+        ctx.fill();
+        ctx.strokeStyle = d3.color(LC.report).copy({ opacity: 0.25 }).formatRgb(); ctx.lineWidth = Math.max(lw, rc * 0.01);
+        ctx.beginPath();
+        for (var i = 0; i < 36; i++) { var a = i / 36 * 6.283 + T * 0.05; ctx.moveTo(Math.cos(a) * rc * 0.15, Math.sin(a) * rc * 0.15); ctx.lineTo(Math.cos(a) * rc * 0.95, Math.sin(a) * rc * 0.95); }
+        ctx.stroke();
+      }
+      ctx.restore();
+      // membrane between layers
+      ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = Math.max(lw * 1.5, thick(l) * 0.02);
+      boundaryPath(b[0]); ctx.stroke();
+      ctx.strokeStyle = d3.color(LC[l]).copy({ opacity: 0.35 }).formatRgb(); ctx.lineWidth = lw * 1.2; ctx.stroke();
+    });
+  }
+
+  function drawStructures(k) {
+    var lw = 1 / k;
+    tables.forEach(function (t) {
+      var on = inSel(t), hot = hover && hover.tab === t;
+      ctx.globalAlpha = on ? 1 : 0.25;
+      var col = d3.color(LC[t.layer]);
+      if (t.layer === "semantic" || t.layer === "report") {
+        var p = tableCenter(t), r = organR(t), isHeart = t.kind === "measure-table";
+        if (isHeart) r *= heartScale();
+        var tone = d3.color(TC[t.layer]);
+        var g = ctx.createRadialGradient(p[0] - r * 0.3, p[1] - r * 0.3, r * 0.1, p[0], p[1], r * 1.1);
+        g.addColorStop(0, (isHeart ? d3.color("#ff5a6e") : tone.brighter(t.layer === "report" ? 0.3 : 1.1)).formatRgb());
+        g.addColorStop(1, (isHeart ? d3.color("#6d0f24") : tone.darker(0.7)).formatRgb());
+        blobPath(p[0], p[1], r, T * 0.6 + t.th * 3, isHeart ? 0.08 : 0.06);
+        ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = (hot ? "#fff" : col.copy({ opacity: 0.8 }).formatRgb()); ctx.lineWidth = lw * (hot ? 2.2 : 1.2); ctx.stroke();
+        if (isHeart) {
+          ctx.strokeStyle = "rgba(40,0,10,.55)"; ctx.lineWidth = r * 0.05;
+          ctx.beginPath(); ctx.moveTo(p[0], p[1] - r * 0.7); ctx.quadraticCurveTo(p[0] + r * 0.2, p[1], p[0] - r * 0.1, p[1] + r * 0.75); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p[0] - r * 0.7, p[1] - r * 0.1); ctx.quadraticCurveTo(p[0], p[1] + r * 0.1, p[0] + r * 0.7, p[1] - r * 0.2); ctx.stroke();
+        }
+        if (t.layer === "report") {
+          ctx.fillStyle = col.copy({ opacity: 0.25 + 0.2 * Math.sin(T * 3 + t.th) }).formatRgb();
+          ctx.beginPath(); ctx.arc(p[0], p[1], r * 1.5, 0, 6.283); ctx.fill();
+        }
+      } else {
+        var tk = thick(t.layer), a0 = t.th - t.arc / 2 - 0.015, a1 = t.th + t.arc / 2 + 0.015;
+        var rO = rAt(t.layer, 0.12), rI = rAt(t.layer, 0.88);
+        ctx.beginPath();
+        var n = 20, i, pp;
+        for (i = 0; i <= n; i++) { pp = P(a0 + (a1 - a0) * i / n, rO); if (i) ctx.lineTo(pp[0], pp[1]); else ctx.moveTo(pp[0], pp[1]); }
+        for (i = n; i >= 0; i--) { pp = P(a0 + (a1 - a0) * i / n, rI); ctx.lineTo(pp[0], pp[1]); }
+        ctx.closePath();
+        ctx.fillStyle = col.copy({ opacity: hot ? 0.3 : 0.14 }).formatRgb(); ctx.fill();
+        ctx.strokeStyle = col.copy({ opacity: hot ? 1 : 0.55 }).formatRgb(); ctx.lineWidth = lw * (hot ? 2 : 1); ctx.stroke();
+        if (t.layer === "gold") {
+          // osteon: concentric lamellae
+          var c = tableCenter(t);
+          ctx.strokeStyle = d3.color(TC.gold).darker(t.kind === "fact" ? 1.6 : 1.1).formatRgb(); ctx.lineWidth = Math.max(lw, tk * 0.015);
+          for (var q = 1; q <= (t.kind === "fact" ? 4 : 3); q++) { ctx.beginPath(); ctx.arc(c[0], c[1], tk * 0.08 * q, 0, 6.283); ctx.stroke(); }
+          ctx.fillStyle = "#2a0d12"; ctx.beginPath(); ctx.arc(c[0], c[1], tk * 0.04, 0, 6.283); ctx.fill();
+        }
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function updateEdges() {
+    edges.forEach(function (e) {
+      var a = colPos(e.from), b = colPos(e.to);
+      e.p0 = a; e.p2 = b;
+      if (e.from.tab === e.to.tab) {
+        var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, len = Math.hypot(mx, my) || 1, bulge = thick(e.from.layer) * 0.35;
+        e.p1 = [mx + mx / len * bulge, my + my / len * bulge];
+      } else {
+        var th = circMean([e.from.th, e.to.th]);
+        var r = (rAt(e.from.layer, e.from.depth) + rAt(e.to.layer, e.to.depth)) / 2;
+        e.p1 = P(th, r * 0.98);
+      }
+      e.len = Math.hypot(e.p1[0] - e.p0[0], e.p1[1] - e.p0[1]) + Math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) + 1;
+      e.hot *= 0.94;
+    });
+  }
+  function bez(e, t) {
+    var u = 1 - t;
+    return [u * u * e.p0[0] + 2 * u * t * e.p1[0] + t * t * e.p2[0], u * u * e.p0[1] + 2 * u * t * e.p1[1] + t * t * e.p2[1]];
+  }
+  function drawVessels(k) {
+    var lw = 1 / k;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round";
+    // dim base network, one batched path
+    ctx.beginPath();
+    edges.forEach(function (e) {
+      if (selection && selection.edges.has(e.i)) return;
+      ctx.moveTo(e.p0[0], e.p0[1]); ctx.quadraticCurveTo(e.p1[0], e.p1[1], e.p2[0], e.p2[1]);
+    });
+    ctx.strokeStyle = selection ? "rgba(150,30,40,.05)" : "rgba(190,40,52,.16)"; ctx.lineWidth = lw * 1.4; ctx.stroke();
+    // lit vessels: selected, or recently used
+    edges.forEach(function (e) {
+      var lit = selection && selection.edges.has(e.i);
+      var a = lit ? 0.55 : e.hot * 0.5;
+      if (a < 0.02) return;
+      var c = d3.interpolateRgb("#ff3b4e", LC[e.to.layer])(0.4);
+      ctx.beginPath(); ctx.moveTo(e.p0[0], e.p0[1]); ctx.quadraticCurveTo(e.p1[0], e.p1[1], e.p2[0], e.p2[1]);
+      ctx.strokeStyle = d3.color(c).copy({ opacity: a * 0.45 }).formatRgb(); ctx.lineWidth = lw * 4; ctx.stroke();
+      ctx.strokeStyle = d3.color(c).copy({ opacity: a }).formatRgb(); ctx.lineWidth = lw * 1.2; ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function cellLayer(p) { return p.e.t < 0.5 ? p.e.from.layer : p.e.to.layer; }
+  function drawParticles(k) {
+    var base = 2.1 * (1 + Math.log2(Math.max(1, k)) * 0.35) / k;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    particles.forEach(function (p) {
+      if (p.t < 0) return;
+      var pos = bez(p.e, p.t), l = cellLayer(p), r = base * (p === follow ? 2.4 : 1), c = LC[l];
+      p.x = pos[0]; p.y = pos[1];
+      ctx.fillStyle = c; ctx.strokeStyle = c;
+      if (l === "source") {
+        ctx.beginPath(); var rot = p.seed * 6;
+        for (var i = 0; i < 5; i++) { var a = rot + i * 1.2566, rr = r * (i % 2 ? 0.6 : 1.25); ctx.lineTo(pos[0] + Math.cos(a) * rr, pos[1] + Math.sin(a) * rr); }
+        ctx.closePath(); ctx.globalAlpha = 0.85; ctx.fill();
+      } else if (l === "bronze") {
+        var q = bez(p.e, Math.max(0, p.t - 0.03));
+        ctx.globalAlpha = 0.5; ctx.lineWidth = r * 0.9; ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(pos[0], pos[1]); ctx.stroke();
+        ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.arc(pos[0], pos[1], r, 0, 6.283); ctx.fill();
+      } else if (l === "silver") {
+        ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.ellipse(pos[0], pos[1], r * 1.35, r * 0.95, p.seed * 3, 0, 6.283); ctx.fill();
+        ctx.globalAlpha = 0.6; ctx.fillStyle = "#3a0007"; ctx.globalCompositeOperation = "source-over";
+        ctx.beginPath(); ctx.arc(pos[0], pos[1], r * 0.45, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = "lighter";
+      } else if (l === "gold") {
+        ctx.globalAlpha = 0.95; ctx.beginPath();
+        for (var h = 0; h < 6; h++) { var ah = h * 1.0472 + p.seed; ctx.lineTo(pos[0] + Math.cos(ah) * r * 1.3, pos[1] + Math.sin(ah) * r * 1.3); }
+        ctx.closePath(); ctx.fill();
+      } else if (l === "semantic") {
+        ctx.globalAlpha = 0.18; ctx.beginPath(); ctx.arc(pos[0], pos[1], r * 3.4, 0, 6.283); ctx.fill();
+        ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(pos[0], pos[1], r * 1.1, 0, 6.283); ctx.fill();
+      } else {
+        ctx.globalAlpha = 1; ctx.lineWidth = r * 0.5; ctx.beginPath();
+        for (var s = 0; s < 4; s++) { var as = s * 0.785 + T * 4; ctx.moveTo(pos[0] - Math.cos(as) * r * 2, pos[1] - Math.sin(as) * r * 2); ctx.lineTo(pos[0] + Math.cos(as) * r * 2, pos[1] + Math.sin(as) * r * 2); }
+        ctx.stroke();
+      }
+    });
+    if (follow && follow.t >= 0) {
+      ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5 / k;
+      ctx.beginPath(); ctx.arc(follow.x, follow.y, base * 7 + Math.sin(T * 6) * base, 0, 6.283); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawSparks(k) {
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    sparks = sparks.filter(function (s) { return s.life > 0; });
+    sparks.forEach(function (s) {
+      var a = s.life;
+      ctx.strokeStyle = d3.color(s.c).copy({ opacity: a * 0.8 }).formatRgb(); ctx.lineWidth = 1.4 / k;
+      ctx.beginPath(); ctx.arc(s.x, s.y, (1 - a) * 18 / k + 2 / k, 0, 6.283); ctx.stroke();
+    });
+    ctx.restore();
+    // transform labels: few, legible, never piled up
+    ctx.save();
+    ctx.font = "500 " + (10.5 / k) + "px " + DML.css("--font-mono").split(",")[0];
+    ctx.textAlign = "center";
+    sparks.forEach(function (s) {
+      if (!s.label) return;
+      var a = Math.min(1, s.life * 1.6);
+      ctx.globalAlpha = a;
+      ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(0,0,0,.85)"; ctx.strokeText(s.label, s.x, s.y - (1 - s.life) * 16 / k - 6 / k);
+      ctx.fillStyle = s.c; ctx.fillText(s.label, s.x, s.y - (1 - s.life) * 16 / k - 6 / k);
+    });
+    ctx.restore();
+  }
+
+  function txt(s, x, y, k, size, color, weight, align) {
+    ctx.font = (weight || 500) + " " + (size / k) + "px Inter, system-ui, sans-serif";
+    ctx.textAlign = align || "center"; ctx.textBaseline = "middle";
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(5,2,3,.85)"; ctx.lineJoin = "round";
+    ctx.strokeText(s, x, y); ctx.fillStyle = color; ctx.fillText(s, x, y);
+  }
+  function drawLabels(k) {
+    // anatomy-textbook callouts when the whole specimen is in view
+    if (k < fitK * 2.6) {
+      var a = Math.max(0, Math.min(1, (fitK * 2.6 - k) / (fitK * 1.2)));
+      ctx.save(); ctx.globalAlpha = a;
+      ORDER.forEach(function (l, i) {
+        var th = -0.95 + i * 0.36, p = P(th, rAt(l, 0.5));
+        var lx = RX * 1.13, ly = -RY * 0.78 + i * RY * 0.31;
+        ctx.strokeStyle = "rgba(235,220,210,.45)"; ctx.lineWidth = 1 / k;
+        ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(lx - 14 / k, ly); ctx.lineTo(lx - 4 / k, ly); ctx.stroke();
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(p[0], p[1], 2.5 / k, 0, 6.283); ctx.fill();
+        txt(String.fromCharCode(65 + i) + "  " + TISSUE[l].name.toUpperCase(), lx, ly - 7 / k, k, 13, LC[l], 700, "left");
+        txt(model.layerById[l].name + " · " + TISSUE[l].latin, lx, ly + 9 / k, k, 11, "#b9aca4", 450, "left");
+      });
+      ctx.restore();
+    }
+    // table names
+    if (k > fitK * 1.5) {
+      var ta = Math.min(1, (k - fitK * 1.5) / (fitK * 0.8));
+      ctx.save(); ctx.globalAlpha = ta;
+      tables.forEach(function (t) {
+        if (!inSel(t) && selection) return;
+        var p;
+        if (t.layer === "semantic" || t.layer === "report") { p = tableCenter(t); p = [p[0], p[1] - organR(t) * 1.05]; }
+        else p = P(t.th, rAt(t.layer, 0.04));
+        txt(DML.tableLabel(t.t), p[0], p[1], k, 11.5, "#fff", 600);
+      });
+      ctx.restore();
+    }
+    // column names deep in
+    if (k > fitK * 5) {
+      var ca = Math.min(1, (k - fitK * 5) / (fitK * 2));
+      ctx.save(); ctx.globalAlpha = ca;
+      var vx0 = -transform.x / k, vy0 = -transform.y / k, vx1 = vx0 + W / k, vy1 = vy0 + H / k;
+      cols.forEach(function (c) {
+        var p = colPos(c);
+        if (p[0] < vx0 || p[0] > vx1 || p[1] < vy0 || p[1] > vy1) return;
+        if (selection && !selection.cols.has(c.id)) return;
+        ctx.fillStyle = LC[c.layer]; ctx.beginPath(); ctx.arc(p[0], p[1], 2.2 / k, 0, 6.283); ctx.fill();
+        txt(c.c.name, p[0] + 5 / k, p[1], k, 10, "#efe6df", 450, "left");
+      });
+      ctx.restore();
+    }
+  }
+
+  // ------------------------------------------------------------ simulation
+  function spawnFrom(c, delay) {
+    var options = c.down.filter(okEdge);
+    if (!options.length) return null;
+    var e = pick(options, false);
+    var p = { e: e, t: -(delay || 0), seed: Math.random(), hist: [], x: 0, y: 0 };
+    particles.push(p);
+    return p;
+  }
+  function okEdge(e) { return !selection || selection.edges.has(e.i); }
+  function pick(options, preferReach) {
+    var good = options.filter(function (e) { return e.to.reach; });
+    if (good.length && (preferReach || Math.random() < 0.8)) options = good;
+    return options[Math.floor(Math.random() * options.length)];
+  }
+  var spawnAcc = 0;
+  function sources() {
+    var list = selection ? selection.entry : cols.filter(function (c) { return c.layer === "source" && c.down.length; });
+    return list;
+  }
+  function step(dt) {
+    var v = 95 * speed;
+    // ambient flow
+    spawnAcc += dt * 14 * speed;
+    var src = sources();
+    while (spawnAcc > 1 && particles.length < 900 && src.length) { spawnAcc -= 1; spawnFrom(src[Math.floor(Math.random() * src.length)]); }
+    if (spawnAcc > 1) spawnAcc = 1;
+    var born = [];
+    particles.forEach(function (p) {
+      if (p.t < 0) { p.t += dt * 1.5 * Math.max(0.2, speed); if (p.t < 0) return; p.t = 0; }
+      p.t += v * dt / p.e.len;
+      p.e.hot = Math.min(1, p.e.hot + 0.08);
+      if (p.t >= 1) {
+        var e = p.e, end = e.to;
+        if (p === follow) p.hist.push(e);
+        if (!e.quiet) {
+          stats.transforms++;
+          var showLbl = p === follow || k() > fitK * 2.2 || (selection && Math.random() < 0.35);
+          var pos = colPos(end);
+          if (showLbl && sparks.filter(function (s) { return s.label && s.life > 0.4; }).length < (p === follow ? 99 : 10)) {
+            sparks.push({ x: pos[0], y: pos[1], life: 1, c: LC[end.layer], label: e.tf });
+          } else if (Math.random() < 0.3) sparks.push({ x: pos[0], y: pos[1], life: 1, c: LC[end.layer] });
+        }
+        if (end.layer === "semantic") { stats.organs++; ecgAcc += 0.25; }
+        if (end.layer === "report") {
+          stats.delivered++; ecgAcc += 1; beat = Math.min(1, beat + 0.08);
+          var rp = colPos(end); sparks.push({ x: rp[0], y: rp[1], life: 1, c: LC.report });
+        }
+        var next = end.down.filter(okEdge);
+        if (!next.length) { p.dead = true; if (p === follow) arrive(p); return; }
+        p.e = pick(next, p === follow);
+        p.t = 0;
+        // a column feeding several places sends copies down each, within reason
+        if (p !== follow && next.length > 1 && Math.random() < 0.18 && particles.length + born.length < 900) {
+          born.push({ e: pick(next, false), t: 0, seed: Math.random(), hist: [], x: 0, y: 0 });
+        }
+      }
+    });
+    particles = particles.filter(function (p) { return !p.dead; }).concat(born);
+    sparks.forEach(function (s) { s.life -= dt * (s.label ? 0.55 : 1.4); });
+    beat *= Math.pow(0.2, dt);
+    // ecg
+    ecgBuf[ecgHead] = Math.min(1, ecgAcc * 0.5); ecgAcc *= 0.25;
+    ecgHead = (ecgHead + 1) % ecgBuf.length;
+  }
+  function k() { return transform.k; }
+
+  function pump() {
+    var src = cols.filter(function (c) { return c.layer === "source" && c.down.length && (!selection || selection.entry.indexOf(c) >= 0); });
+    if (!src.length) src = sources();
+    for (var i = 0; i < 160; i++) spawnFrom(src[i % src.length], Math.random() * 0.9);
+    beat = 1;
+  }
+
+  // ------------------------------------------------------------ follow a cell
+  function startFollow() {
+    var src = (selection ? selection.entry : cols.filter(function (c) { return c.layer === "source"; })).filter(function (c) { return c.reach; });
+    if (!src.length) src = sources();
+    var c = src[Math.floor(Math.random() * src.length)];
+    var opts = c.down.filter(function (e) { return okEdge(e) && e.to.reach; });
+    if (!opts.length) opts = c.down.filter(okEdge);
+    if (!opts.length) return;
+    follow = { e: opts[Math.floor(Math.random() * opts.length)], t: 0, seed: Math.random(), hist: [], x: 0, y: 0, start: c };
+    particles.push(follow);
+    followLeft = 0;
+    document.getElementById("followtag").classList.add("on");
+    document.getElementById("follow").classList.add("is-on");
+    renderJournal();
+  }
+  function stopFollow() {
+    follow = null;
+    document.getElementById("followtag").classList.remove("on");
+    document.getElementById("follow").classList.remove("is-on");
+  }
+  function arrive(p) {
+    renderJournal(true);
+    followLeft = 1.6;
+  }
+  var lastHist = -1;
+  function renderJournal(done) {
+    if (!follow) return;
+    var f = follow;
+    var h = '<p class="eyebrow">Cell journal</p><h3>One value, start to finish</h3>';
+    h += '<p>Born in <code>' + DML.esc(f.start.id.replace(/^source\./, "")) + '</code>. Each stop is a column it landed in, with the transform that delivered it.</p><ul class="journal">';
+    h += '<li style="--c:' + LC.source + '"><code>' + DML.esc(f.start.tab.t.schema + "." + f.start.tab.t.name + "." + f.start.c.name) + '</code><span class="tx">' + TISSUE.source.name + " · " + DML.esc(f.start.c.type || "") + "</span></li>";
+    f.hist.forEach(function (e) {
+      var c = e.to;
+      h += '<li style="--c:' + LC[c.layer] + '"><code>' + DML.esc(DML.tableLabel(c.tab.t) + (c.layer === "semantic" ? "[" + c.c.name + "]" : "." + c.c.name)) + '</code><span class="tx">' + TISSUE[c.layer].name + " · " + DML.esc(e.tf) + "</span></li>";
+    });
+    if (!done) h += '<li style="--c:#fff"><span class="tx">travelling through ' + TISSUE[cellLayer(f)].name.toLowerCase() + "…</span></li>";
+    else h += '<li style="--c:' + LC.report + '"><b>Arrived.</b><span class="tx">' + (f.e.to.layer === "report" ? "It lit up a visual: the question has its answer." : "Its lineage ends here; nothing downstream reads it.") + "</span></li>";
+    panel.innerHTML = h + "</ul>";
+    lastHist = f.hist.length;
+  }
+
+  // ------------------------------------------------------------ selection
+  function selectTable(t) {
+    var r = model.traceTable(t.id);
+    setSelection(r, t, null);
+  }
+  function selectColumn(c) {
+    var r = model.trace([c.id]);
+    setSelection(r, c.tab, c);
+  }
+  function setSelection(r, t, c) {
+    var tabs = new Set(), layers = new Set();
+    r.cols.forEach(function (id) { var x = colById[id]; tabs.add(x.tab.id); layers.add(x.layer); });
+    tabs.add(t.id); layers.add(t.layer);
+    // entry points: the outermost columns in the trace
+    var inTrace = cols.filter(function (x) { return r.cols.has(x.id); });
+    var entry = inTrace.filter(function (x) { return !x.up.some(function (e) { return r.edges.has(e.i); }) && x.down.some(function (e) { return r.edges.has(e.i); }); });
+    selection = { tables: tabs, layers: layers, cols: r.cols, edges: r.edges, entry: entry, table: t, col: c };
+    particles = particles.filter(function (p) { return p === follow || r.edges.has(p.e.i); });
+    if (follow && !r.edges.has(follow.e.i)) stopFollow();
+    renderSelection();
+  }
+  function clearSelection() { selection = null; renderDefault(); }
+  function renderSelection() {
+    var s = selection, t = s.table, h = "";
+    h += '<p class="eyebrow" style="color:' + DML.layerColor(t.layer) + '">' + TISSUE[t.layer].name + " · " + DML.esc(ROLE[t.kind] || "Structure") + "</p>";
+    if (s.col) {
+      h += "<h3>" + DML.esc(DML.tableLabel(t.t)) + "." + DML.esc(s.col.c.name) + "</h3>";
+      var up = s.col.up.map(function (e) { return "<li><code>" + DML.esc(e.from.id.replace(/^[a-z]+\./, "")) + "</code> <span class=\"muted\">" + DML.esc(e.tf) + "</span></li>"; }).join("");
+      var dn = s.col.down.map(function (e) { return "<li><code>" + DML.esc(e.to.id.replace(/^[a-z]+\./, "")) + "</code> <span class=\"muted\">" + DML.esc(e.tf) + "</span></li>"; }).join("");
+      if (s.col.c.expression) h += "<p><code>" + DML.esc(s.col.c.expression) + "</code></p>";
+      h += "<h4>Fed by</h4>" + (up ? "<ul>" + up + "</ul>" : '<p class="muted">Nothing: this is where it enters the body.</p>');
+      h += "<h4>Feeds</h4>" + (dn ? "<ul>" + dn + "</ul>" : '<p class="muted">Nothing downstream.</p>');
+    } else {
+      h += DML.tablePanel(model, t.t).replace(/^<p class="eyebrow"[^>]*>.*?<\/p>/, "");
+    }
+    h += '<h4>Lineage through the body</h4><p>' + s.edges.size + " vessels, " + s.tables.size + " structures across " + s.layers.size + " tissues light up. Cells now travel only these paths. Click empty tissue to close the incision.</p>";
+    h += '<p><button class="btn" type="button" id="clearsel">Close the incision</button></p>';
+    panel.innerHTML = h;
+    document.getElementById("clearsel").addEventListener("click", clearSelection);
+  }
+  function renderDefault() {
+    var h = '<p class="eyebrow">Specimen</p><h3>' + DML.esc(model.model.name) + "</h3>";
+    h += "<p>" + tables.length + " structures, " + cols.length + " columns and " + edges.length + " vessels, drawn from the shared sample model.</p><ul class=\"mapping\">";
+    ORDER.forEach(function (l) {
+      h += '<li><span class="dot" style="background:' + DML.layerColor(l) + '"></span><b>' + TISSUE[l].name + "</b> is " + DML.esc(model.layerById[l].name.toLowerCase()) + ". " + DML.esc(TISSUE[l].why) + "</li>";
+    });
+    h += '<li><span class="dot" style="background:#e33"></span><b>Blood</b> is the data. Cells move inward along column lineage and change shape at every real transform.</li></ul>';
+    h += '<p class="muted">Try: Follow a cell, then zoom out and Pump a load.</p>';
+    panel.innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ hit testing
+  function worldAt(ev) {
+    var r = cv.getBoundingClientRect(), sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+    return transform.invert([sx, sy]);
+  }
+  function hitTest(w) {
+    var kk = k(), best = null, bd = Infinity;
+    if (kk > fitK * 3) {
+      cols.forEach(function (c) {
+        if (selection && !selection.cols.has(c.id)) return;
+        var p = colPos(c), d = Math.hypot(p[0] - w[0], p[1] - w[1]);
+        if (d < bd) { bd = d; best = { col: c, tab: c.tab }; }
+      });
+      if (best && bd < 9 / kk) return best;
+      best = null; bd = Infinity;
+    }
+    tables.forEach(function (t) {
+      var p = tableCenter(t), d = Math.hypot(p[0] - w[0], p[1] - w[1]);
+      var lim = (t.layer === "semantic" || t.layer === "report") ? organR(t) * 1.05 : Math.max(thick(t.layer) * 0.45, 18 / kk) + (t.arc * RY * 0.4);
+      if (d < lim && d < bd) { bd = d; best = { tab: t }; }
+    });
+    return best;
+  }
+
+  // ------------------------------------------------------------ frame
+  var fitK = 1;
+  function frame(now) {
+    var dt = Math.min(0.05, (now - (last || now)) / 1000); last = now;
+    if (!paused) { T += dt; step(dt); }
+    // lens: swell the tissue under the mouse
+    ORDER.forEach(function (l) {
+      var tw = TISSUE[l].w;
+      if (lensOn && lensLayer) tw *= l === lensLayer ? 2.6 : (Math.abs(ORDER.indexOf(l) - ORDER.indexOf(lensLayer)) === 1 ? 0.9 : 0.6);
+      targetW[l] = tw;
+      weights[l] += (targetW[l] - weights[l]) * Math.min(1, dt * 4);
+    });
+    B = bounds();
+    // camera follows a cell
+    if (follow && follow.t >= 0 && follow.x !== undefined) {
+      var tk = Math.max(fitK * 7, Math.min(transform.k, fitK * 14));
+      var nk = transform.k + (tk - transform.k) * Math.min(1, dt * 1.5);
+      var tx = W / 2 - follow.x * nk, ty = H / 2 - follow.y * nk;
+      var nx = transform.x + (tx - transform.x) * Math.min(1, dt * 3), ny = transform.y + (ty - transform.y) * Math.min(1, dt * 3);
+      programmatic = true; sel.call(zoom.transform, d3.zoomIdentity.translate(nx, ny).scale(nk)); programmatic = false;
+      if (follow.hist.length !== lastHist) renderJournal();
+    }
+    if (followLeft > 0) { followLeft -= dt; if (followLeft <= 0) { stopFollow(); } }
+
+    updateEdges();
+    var kk = transform.k;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.setTransform(DPR * kk, 0, 0, DPR * kk, DPR * transform.x, DPR * transform.y);
+    ctx.filter = scan === "mri" ? "grayscale(1) contrast(1.35) brightness(1.1)" : "none";
+    drawTissue(kk);
+    drawStructures(kk);
+    ctx.filter = "none";
+    drawVessels(kk);
+    drawParticles(kk);
+    drawSparks(kk);
+    drawLabels(kk);
+    if (scan === "mri") {
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      var sy = (T * 90) % (H + 80) - 40;
+      var g = ctx.createLinearGradient(0, sy - 40, 0, sy + 4);
+      g.addColorStop(0, "rgba(120,200,255,0)"); g.addColorStop(1, "rgba(160,220,255,.22)");
+      ctx.fillStyle = g; ctx.fillRect(0, sy - 40, W, 44);
+      ctx.fillStyle = "rgba(190,235,255,.5)"; ctx.fillRect(0, sy, W, 1);
+    }
+    hud();
+    requestAnimationFrame(frame);
+  }
+  var programmatic = false;
+
+  var hudTick = 0;
+  function hud() {
+    hudTick++;
+    // ecg strip
+    var w = ecgCv.width, h = ecgCv.height;
+    ecg.clearRect(0, 0, w, h);
+    ecg.strokeStyle = "rgba(255,255,255,.07)"; ecg.lineWidth = 1;
+    for (var gx = 0; gx < w; gx += 20) { ecg.beginPath(); ecg.moveTo(gx, 0); ecg.lineTo(gx, h); ecg.stroke(); }
+    ecg.strokeStyle = LC.report; ecg.lineWidth = 2.4; ecg.beginPath();
+    for (var i = 0; i < ecgBuf.length; i++) {
+      var v = ecgBuf[(ecgHead + i) % ecgBuf.length], x = i / (ecgBuf.length - 1) * w;
+      var y = h * 0.72 - v * h * 0.62 + (v > 0.05 ? (i % 2 ? -1 : 1) * v * 6 : 0);
+      if (i) ecg.lineTo(x, y); else ecg.moveTo(x, y);
+    }
+    ecg.stroke();
+    if (hudTick % 6) return;
+    var kk = transform.k / fitK;
+    document.getElementById("mag").textContent = "×" + (kk < 10 ? kk.toFixed(1) : Math.round(kk));
+    // depth: what tissue is at the centre of the view
+    var c = transform.invert([W / 2, H / 2]), n = toNorm(c[0], c[1]), l = layerAtNorm(n.rn);
+    document.getElementById("depthname").textContent = l ? TISSUE[l].name + " · " + model.layerById[l].name : "Outside the body";
+    document.querySelectorAll("#gauge button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-l") === l); });
+    document.getElementById("stats").innerHTML = "cells in flight <b>" + particles.length + "</b><br>transforms <b>" + stats.transforms + "</b><br>answers delivered <b>" + stats.delivered + "</b>";
+  }
+
+  // ------------------------------------------------------------ navigation
+  function dive(l) {
+    stopFollow();
+    var th = -0.25, p = P(th, rAt(l, 0.5)), tk = thick(l) * (lensOn ? 1.6 : 1);
+    var kk = Math.min(fitK * 30, Math.max(fitK * 1.6, H * 0.5 / tk));
+    if (l === "report") { p = [0, 0]; kk = Math.min(fitK * 30, H * 0.8 / (thick("report") * 2.2)); }
+    var t = d3.zoomIdentity.translate(W / 2, H / 2).scale(kk).translate(-p[0], -p[1]);
+    sel.transition().duration(reduceMotion ? 0 : 1700).ease(d3.easeCubicInOut).call(zoom.transform, t);
+  }
+
+  function init(m) {
+    model = m;
+    paintColors();
+    layout(m);
+    resize();
+    zoom = d3.zoom().scaleExtent([0.2, 80]).clickDistance(5)
+      .on("start", function (ev) { if (ev.sourceEvent && follow && !programmatic) stopFollow(); stage.classList.add("is-grab"); })
+      .on("zoom", function (ev) { transform = ev.transform; })
+      .on("end", function () { stage.classList.remove("is-grab"); });
+    sel.call(zoom).on("dblclick.zoom", null);
+    var ft = fitTransform(); fitK = ft.k;
+    zoom.scaleExtent([fitK * 0.6, fitK * 60]);
+    sel.call(zoom.transform, ft);
+
+    // gauge
+    var gauge = document.getElementById("gauge");
+    ORDER.forEach(function (l) {
+      var li = document.createElement("li"), b = document.createElement("button");
+      b.type = "button"; b.setAttribute("data-l", l); b.style.color = LC[l];
+      b.innerHTML = '<span class="sw" style="background:' + LC[l] + '"></span><b style="color:#f3ebe6">' + TISSUE[l].name + "</b><small>" + DML.esc(m.layerById[l].name) + "</small>";
+      b.addEventListener("click", function () { dive(l); });
+      li.appendChild(b); gauge.appendChild(li);
+    });
+    document.getElementById("maptable").innerHTML = ORDER.map(function (l) {
+      return '<tr><td><b>' + TISSUE[l].name + '</b><br><span class="muted">' + TISSUE[l].latin + '</span></td><td><span class="chip chip--' + l + '">' + l + "</span></td><td>" + DML.esc(TISSUE[l].why) + "</td></tr>";
+    }).join("") + '<tr><td><b>Blood</b><br><span class="muted">Cells in vessels</span></td><td>data</td><td>Column values moving along lineage. The vessels are the column-to-column edges; the cells change shape at every real transform.</td></tr>';
+
+    cv.addEventListener("mousemove", function (ev) {
+      var w = worldAt(ev); mouse = w;
+      var n = toNorm(w[0], w[1]), l = layerAtNorm(n.rn);
+      var now = performance.now();
+      if (l !== lensCandidate) { lensCandidate = l; lensSince = now; }
+      if (now - lensSince > 140) lensLayer = lensCandidate;
+      var hit = hitTest(w);
+      hover = hit;
+      if (hit) {
+        var t = hit.tab, hh;
+        if (hit.col) hh = "<b>" + DML.esc(hit.col.c.name) + "</b><br>" + DML.esc(DML.tableLabel(t.t)) + " · " + TISSUE[t.layer].name + "<br><span style=\"opacity:.7\">" + DML.esc(hit.col.c.expression || hit.col.c.type || "") + "</span>";
+        else hh = "<b>" + DML.esc(DML.tableLabel(t.t)) + "</b><br>" + TISSUE[t.layer].name + " · " + DML.esc(ROLE[t.kind] || t.kind) + " · " + t.cols.length + " columns<br><span style=\"opacity:.7\">Click to dissect its lineage</span>";
+        DML.tip.show(hh, ev); cv.style.cursor = "pointer";
+      } else { DML.tip.hide(); cv.style.cursor = ""; }
+    });
+    cv.addEventListener("mouseleave", function () { lensLayer = null; lensCandidate = null; hover = null; DML.tip.hide(); });
+    cv.addEventListener("click", function (ev) {
+      var hit = hitTest(worldAt(ev));
+      if (!hit) { if (selection) clearSelection(); return; }
+      if (hit.col) selectColumn(hit.col); else selectTable(hit.tab);
+    });
+    document.getElementById("pump").addEventListener("click", pump);
+    document.getElementById("follow").addEventListener("click", function () { if (follow) stopFollow(); else startFollow(); });
+    document.getElementById("lens").addEventListener("click", function () {
+      lensOn = !lensOn; this.textContent = "Lens: " + (lensOn ? "on" : "off"); this.classList.toggle("is-on", lensOn); this.setAttribute("aria-pressed", lensOn);
+    });
+    document.getElementById("scan").addEventListener("change", function () { scan = this.value; });
+    document.getElementById("speed").addEventListener("input", function () { speed = +this.value; });
+    document.getElementById("pause").addEventListener("click", function () { paused = !paused; this.textContent = paused ? "Play" : "Pause"; });
+    document.getElementById("reset").addEventListener("click", function () { stopFollow(); sel.transition().duration(reduceMotion ? 0 : 1200).call(zoom.transform, fitTransform()); });
+    document.getElementById("full").addEventListener("click", function () {
+      if (document.fullscreenElement) document.exitFullscreen(); else if (stage.requestFullscreen) stage.requestFullscreen();
+    });
+    var refit = function () {
+      var oldFit = fitK; resize(); var ft = fitTransform(); fitK = ft.k;
+      zoom.scaleExtent([fitK * 0.6, fitK * 60]);
+      if (Math.abs(transform.k - oldFit) < oldFit * 0.05) sel.call(zoom.transform, ft);
+    };
+    if ("ResizeObserver" in window) new ResizeObserver(refit).observe(stage); else window.addEventListener("resize", refit);
+    document.addEventListener("themechange", paintColors);
+    window.addEventListener("keydown", function (ev) {
+      if (ev.target && /INPUT|SELECT|TEXTAREA/.test(ev.target.tagName)) return;
+      var i = "123456".indexOf(ev.key); if (i >= 0) dive(ORDER[i]);
+      if (ev.key === "Escape" && selection) clearSelection();
+    });
+    renderDefault();
+    if (reduceMotion) { speed = 0.35; document.getElementById("speed").value = 0.35; }
+    // a first heartbeat so the page opens alive
+    setTimeout(pump, 400);
+    requestAnimationFrame(frame);
+  }
+
+  DML.load().then(init).catch(function (e) {
+    stage.innerHTML = '<p style="padding:20px;color:#fff">' + DML.esc(e.message) + "</p>";
+  });
+})();
+</script>
+</body>
+</html>
