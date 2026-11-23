@@ -24,7 +24,11 @@
       // Sections of the sister site. Paths are relative to its root; keep in
       // sync with dataviz-lab as it grows.
       sections: [
-        { title: "Home", path: "", blurb: "Start here" }
+        { title: "Home", path: "", blurb: "Start here" },
+        { title: "Experimental", path: "experimental/", blurb: "Generative D3 with the data left in" },
+        { title: "Stephen Few", path: "few/", blurb: "Bullet graphs, dashboards, table or graph" },
+        { title: "Edward Tufte", path: "tufte/", blurb: "Sparklines, slopegraphs, small multiples" },
+        { title: "New", path: "new/", blurb: "Forward-looking forms" }
       ]
     },
     sections: [
