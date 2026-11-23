@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="guide" data-page="conformed-dimensions">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conformed dimensions &amp; the bus matrix · Data Model Lab</title>
+<meta name="description" content="What conformed dimensions are, shrunken and rollup dimensions for coarser facts like budget, the enterprise bus matrix for the sample model, drill-across and governance.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 04</p>
+    <h1>Conformed dimensions &amp; the bus matrix</h1>
+    <p class="lede">A conformed dimension is a promise that "Product" means the same thing everywhere it appears. That promise is what lets sales, inventory and budget sit on one page and agree with each other.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>What conformed means</h2>
+<p>Two facts share a conformed dimension when they use the same keys, the same attribute names and the same attribute values. "Same values" is the part that fails in practice: if the budget file says <code>Outdoor Gear</code> and the product master says <code>Outdoor</code>, the dimension is not conformed, no matter how tidy the tables look.</p>
+<p>Conformance comes in two strengths:</p>
+<ul>
+<li><strong>Identical.</strong> Both facts join to the same physical table on the same key. <code>fact_sales</code> and <code>fact_inventory_daily</code> both use <code>dim_product.product_key</code> and <code>dim_warehouse.warehouse_key</code>.</li>
+<li><strong>Shrunken.</strong> One fact uses a strict subset of the dimension: fewer rows (a rollup level) or fewer columns. Every value in the shrunken version exists in the base version, with the same spelling and meaning.</li>
+</ul>
+<p>Facts can be conformed too. If "net amount" appears in sales and in a returns fact, it must be calculated the same way (gross less discount, same currency, same tax treatment) or carry a different name.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Derive every shrunken dimension from its base dimension, never from the fact that needs it. <code>dim_product_category</code> is <code>SELECT DISTINCT category FROM dim_product</code>, and budget rows are validated against it, not the other way round.</p></div>
+
+<h2>Shrunken and rollup dimensions</h2>
+<p><code>fact_budget</code> is set at month x product category x region. It cannot join to <code>dim_product</code> on <code>product_key</code>, because no budget exists at product level, and it cannot join to <code>dim_date</code> on a day. There are three ways to handle it:</p>
+<table>
+<thead><tr><th>Approach</th><th>How</th><th>Trade-off</th></tr></thead>
+<tbody>
+<tr><td>Shrunken dimension tables</td><td>Build <code>dim_product_category</code> and a month-level date table in gold; relate budget to them</td><td>Clean one-to-many relationships, but the model gains tables, and users must know which Category to use</td></tr>
+<tr><td>Relate at the coarser attribute</td><td>In the semantic model, relate Budget to Product on category and to Date at month (many-to-many, single direction)</td><td>One Product and one Date table for everything, but measures must guard against filters below the budget grain</td></tr>
+<tr><td>Allocate down</td><td>Spread category budget to products by last year's mix</td><td>Fake precision. Only do it when the business has agreed the allocation rule.</td></tr>
+</tbody>
+</table>
+<p>The sample model takes the second approach in the semantic layer, while still validating budget categories against <code>dim_product</code> in gold. The rule above holds either way: the category list is owned by the product dimension, and <code>silver.budget</code> maps the budget file onto it, flagging anything that does not match.</p>
+<p>With a many-to-many relationship on category, a filter on a single product still propagates to its category's budget, which silently shows the whole category's budget against one product's sales. Guard the measure:</p>
+<pre><code class="language-dax">Budget =
+IF (
+    ISFILTERED ( 'Product'[Product Name] ) || ISFILTERED ( 'Date'[Date] ),
+    BLANK (),
+    SUM ( Budget[Budget Amount] )
+)
+
+Budget Variance = [Net Sales] - [Budget]</code></pre>
+<p><code>ISFILTERED</code> reacts to slicers as well as visual rows, which is usually what you want for a plan measure. If you only want to blank it on rows below the grain, use <code>ISINSCOPE</code> instead.</p>
+
+<h2>The bus matrix for the sample model</h2>
+<p>The enterprise bus matrix is a planning tool disguised as a table. Rows are business processes (facts); columns are conformed dimensions. Each filled cell is a commitment that the fact will use that dimension, at the grain noted.</p>
+<table>
+<thead><tr><th>Fact</th><th>Date</th><th>Customer</th><th>Product</th><th>Warehouse</th><th>Salesperson</th></tr></thead>
+<tbody>
+<tr><td><code>fact_sales</code></td><td>Day (order, ship)</td><td>Customer version</td><td>Product</td><td>Ship-from</td><td>Salesperson</td></tr>
+<tr><td><code>fact_inventory_daily</code></td><td>Day (snapshot)</td><td></td><td>Product</td><td>Warehouse</td><td></td></tr>
+<tr><td><code>fact_budget</code></td><td>Month</td><td>Region (rollup)</td><td>Category (rollup)</td><td></td><td></td></tr>
+</tbody>
+</table>
+<p>Read down a column to see the dimension's reach: Product touches all three facts, so it is the dimension to get right first. Read across a row to see a process's scope. Empty cells are information too: inventory has no customer, so a report that slices inventory by customer is asking an impossible question, and the model should make that visible rather than silently repeat totals.</p>
+<p>Region in the budget is a rollup of the customer's sales region in the sample. If budgets were set by warehouse region instead, the cell would move to the Warehouse column, and that decision is exactly the conversation the matrix is meant to provoke before anyone builds tables.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Draw the matrix before the first fact table, then deliver row by row. Each new row should mostly reuse existing columns; a row that needs three new dimensions is a new domain and deserves a design review.</p></div>
+
+<h2>Drill-across</h2>
+<p>Drill-across means answering one question from two facts, such as "net sales against closing inventory by category and month." The rule: aggregate each fact separately to the shared, conformed grain, then join the results. Never join two facts row to row; the fan-out multiplies both sides.</p>
+<pre><code class="language-sql">WITH sales AS (
+    SELECT p.category, d.year_month, SUM(f.net_amount) AS net_sales
+    FROM gold.fact_sales AS f
+    JOIN gold.dim_product AS p ON p.product_key = f.product_key
+    JOIN gold.dim_date    AS d ON d.date_key    = f.order_date_key
+    GROUP BY p.category, d.year_month
+),
+stock AS (
+    SELECT p.category, d.year_month, SUM(f.on_hand_qty) AS closing_on_hand
+    FROM gold.fact_inventory_daily AS f
+    JOIN gold.dim_product AS p ON p.product_key = f.product_key
+    JOIN gold.dim_date    AS d ON d.date_key    = f.date_key
+    WHERE d.is_month_end = 1
+    GROUP BY p.category, d.year_month
+)
+SELECT COALESCE(s.category, i.category)     AS category,
+       COALESCE(s.year_month, i.year_month) AS year_month,
+       s.net_sales,
+       i.closing_on_hand
+FROM sales AS s
+FULL OUTER JOIN stock AS i
+  ON i.category = s.category AND i.year_month = s.year_month;</code></pre>
+<p>In a semantic model, drill-across is the default behavior and the real payoff of conformance. Put Product[Category] and Date[Year Month] on a matrix with <em>Net Sales</em>, <em>On Hand Units</em> and <em>Budget</em>, and the engine evaluates each measure against its own fact through the shared dimension tables. No join is written, and no fan-out is possible, as long as the dimensions are truly shared.</p>
+
+<h2>Governance: keeping conformed dimensions conformed</h2>
+<p>Conformance decays unless someone owns it. The practical minimum:</p>
+<ul>
+<li><strong>One owner and one load per conformed dimension.</strong> Other teams consume it; they do not rebuild it with their own filters.</li>
+<li><strong>Domain tests on every load.</strong> Every category in <code>silver.budget</code> exists in <code>dim_product</code>; every region exists in <code>dim_customer</code>; no fact carries a key the dimension lacks.</li>
+<li><strong>Change control on attribute domains.</strong> Renaming a category is a business decision with downstream effects on budgets, targets and saved report filters. Treat the value list as a governed artifact.</li>
+<li><strong>Documented attribute definitions.</strong> "Region" needs one definition, written where both modelers and report authors will find it.</li>
+</ul>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Keep conformed dimensions in one gold Lakehouse or Warehouse and let other workspaces reach them through OneLake shortcuts rather than copies. Direct Lake models in different domains can then read the same Delta tables. Endorse (promote or certify) the shared semantic model so report authors build thin reports on it instead of importing their own Product table. Fabric domains help group workspaces by business area, but they do not enforce conformance; tests do.</p></div>
+<div class="callout callout--open"><strong>Open question</strong><p>In a data mesh, each domain owns its data products. Who owns Customer when sales, service and finance all describe customers? One answer is a small central team that owns only the conformed dimensions and the bus matrix, with domains owning their facts. Whether that scales past a handful of domains is still being argued.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/bus-matrix.html">Bus matrix</a> exploration renders this matrix for the sample model; click a cell to see the keys and grain behind it.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

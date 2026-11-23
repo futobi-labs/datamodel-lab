@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="guide" data-page="analytic-engine-layering">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytic engine layering · Data Model Lab</title>
+<meta name="description" content="Storage, compute, semantic engine, query and consumption in Microsoft Fabric: who does the work at each layer, Direct Lake versus Import versus DirectQuery, and how one visual query travels down the stack.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 06</p>
+    <h1>Analytic engine layering</h1>
+    <p class="lede">A report visual is a query that falls through five layers before it touches a file. Knowing which layer does the work explains most performance problems, and most of the design rules elsewhere in this guide.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>The layer cake</h2>
+<table>
+<thead><tr><th>Layer</th><th>In Fabric</th><th>Does the work of</th><th>Levers you control</th></tr></thead>
+<tbody>
+<tr><td>Storage</td><td>OneLake, Delta tables (Parquet files plus a transaction log)</td><td>Holding columnar data once, for every engine</td><td>File and row group size, V-Order, partitioning, <code>OPTIMIZE</code>, <code>VACUUM</code></td></tr>
+<tr><td>Compute</td><td>Data Pipelines, Dataflows Gen2, Spark notebooks, Warehouse T-SQL, SQL analytics endpoint</td><td>Moving and transforming data, writing Delta</td><td>Which engine writes which layer, load order, transactions</td></tr>
+<tr><td>Semantic engine</td><td>VertiPaq (Analysis Services) in Direct Lake, Import or DirectQuery mode</td><td>Compressed columns in memory, relationships, security</td><td>Storage mode, column count, cardinality, data types</td></tr>
+<tr><td>Query</td><td>DAX formula engine and storage engine</td><td>Evaluating measures in filter context</td><td>Measure design, filter patterns, avoiding callbacks</td></tr>
+<tr><td>Consumption</td><td>Power BI reports, Excel, notebooks via semantic link, Copilot and data agents</td><td>Asking questions</td><td>Visuals per page, slicer design, query volume</td></tr>
+</tbody>
+</table>
+<p>The useful habit is to ask "which layer is slow?" before asking "how do I make it faster?" A cold Direct Lake query is a storage and transcoding question. A slow measure on a warm model is a query engine question. A report page that fires forty queries is a consumption question.</p>
+
+<h2>Storage: OneLake, Delta and V-Order</h2>
+<p>OneLake stores every Lakehouse and Warehouse table as Delta Parquet, and shortcuts let one copy appear in many items. Because every engine reads the same files, file layout is a shared concern: small files and tiny row groups slow down Spark, the SQL engines and Direct Lake alike.</p>
+<p><strong>V-Order</strong> is a write-time optimization that applies special sorting, row group distribution, dictionary encoding and compression to Parquet files. The files remain standard Parquet, so any reader can use them, but VertiPaq and the Fabric SQL engines read them faster. It costs some write time.</p>
+<ul>
+<li>Warehouse writes V-Ordered files by default.</li>
+<li>Spark's default depends on workspace settings and runtime version. Newer workspaces may default to a write-optimized configuration with V-Order off, so check rather than assume.</li>
+<li>Turn it on for gold tables that Direct Lake reads. Bronze rarely needs it.</li>
+</ul>
+<pre><code class="language-sql">-- Spark SQL: enable V-Order on a gold table and compact it
+ALTER TABLE gold.fact_sales SET TBLPROPERTIES ('delta.parquet.vorder.enabled' = 'true');
+OPTIMIZE gold.fact_sales VORDER;</code></pre>
+<p>Property and configuration names have shifted between Fabric Spark runtime versions; confirm them against the current documentation for your runtime.</p>
+
+<h2>Compute: who writes what</h2>
+<ul>
+<li><strong>Data Pipelines</strong> orchestrate and copy. They are the natural home for metadata-driven loops and on-premises extraction through a gateway.</li>
+<li><strong>Dataflows Gen2</strong> run Power Query at scale and can write to Lakehouse or Warehouse. Good for low-code shaping; less good for complex, versioned logic.</li>
+<li><strong>Spark notebooks</strong> write Lakehouse Delta tables: bronze landing, silver cleansing, Delta <code>MERGE</code>.</li>
+<li><strong>Warehouse</strong> runs distributed T-SQL with full DML and multi-table transactions, which suits dimension and fact loads that must commit together.</li>
+<li><strong>The SQL analytics endpoint</strong> gives every Lakehouse a read-only T-SQL surface: views, functions and SQL security, but no writes to tables.</li>
+</ul>
+<div class="callout callout--warn"><strong>Watch out</strong><p>The SQL analytics endpoint picks up Spark writes through a metadata sync that can lag. A pipeline that writes with Spark and immediately reads through the endpoint may see the previous state. If a step depends on fresh data through the endpoint, trigger or wait for the sync explicitly.</p></div>
+
+<h2>The semantic engine: Direct Lake, Import, DirectQuery</h2>
+<p>All three modes put the same VertiPaq engine in front of the user. They differ in where column data comes from.</p>
+<p><strong>Framing</strong> is how a Direct Lake model "refreshes": a metadata operation that points the model at a specific Delta table version. It takes seconds, copies no data, and is the moment new rows become visible. <strong>Transcoding</strong> is what happens on query: columns the query needs are loaded on demand from Parquet into VertiPaq's in-memory format. The first query after framing pays that cost (a cold cache); later queries run at Import-like speed until columns are evicted under memory pressure.</p>
+<p>Direct Lake now comes in two flavors. <strong>Direct Lake on the SQL analytics endpoint</strong> can fall back to DirectQuery through the endpoint when it meets something it cannot read directly: a SQL view, SQL-level security, or a table that exceeds the capacity's guardrails. The model's <code>DirectLakeBehavior</code> setting controls whether fallback is allowed. <strong>Direct Lake on OneLake</strong> reads Delta tables straight from OneLake, does not fall back (queries that exceed limits fail instead), cannot use SQL views, and can combine tables from more than one Fabric item. Check the current status of each flavor and their guardrails for your capacity size.</p>
+<table>
+<thead><tr><th></th><th>Direct Lake</th><th>Import</th><th>DirectQuery</th></tr></thead>
+<tbody>
+<tr><td>Data at query time</td><td>In memory, paged in from OneLake Delta</td><td>In memory, a copy made at refresh</td><td>Stays in the source</td></tr>
+<tr><td>"Refresh"</td><td>Framing: metadata only, seconds</td><td>Full or incremental data load</td><td>None</td></tr>
+<tr><td>New data visible</td><td>After framing</td><td>After refresh</td><td>Immediately</td></tr>
+<tr><td>Transformations in model</td><td>None (no Power Query; calculated columns not supported on Direct Lake tables)</td><td>Power Query, calculated columns and tables</td><td>Limited</td></tr>
+<tr><td>Size limits</td><td>Per-capacity guardrails (rows per table, files, row groups, memory)</td><td>Model size limits per capacity or license</td><td>Bound by the source</td></tr>
+<tr><td>Performance</td><td>Near Import when warm; cold-start cost after framing</td><td>Fastest and most predictable</td><td>Depends on the source; usually slowest</td></tr>
+<tr><td>Best for</td><td>Large gold tables already in OneLake, frequent updates</td><td>Small to medium models, non-Fabric sources, heavy modeling</td><td>Real-time needs, very large data, security enforced at source</td></tr>
+</tbody>
+</table>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Direct Lake rewards gold tables that are V-Ordered, compacted and narrow. Row groups map to VertiPaq segments, so a table written as thousands of tiny files will be slow to transcode and may hit file or row group guardrails. Schedule <code>OPTIMIZE</code> on gold, frame the model after the load completes, and consider warming the cache with a few representative queries before users arrive.</p></div>
+
+<h2>Query: formula engine and storage engine</h2>
+<p>Every DAX query is split between two engines. The <strong>storage engine</strong> scans compressed columns, applies simple filters and aggregates, runs multi-threaded and caches its results. Its requests are expressed in an internal language called xmSQL. The <strong>formula engine</strong> handles everything else: complex filter context, iteration, branching logic. It is single-threaded and works on the data caches the storage engine hands back.</p>
+<p>Fast measures push work into the storage engine. Slow measures force <em>callbacks</em>, where the storage engine has to ask the formula engine to evaluate an expression row by row (an <code>IF</code> inside a <code>SUMX</code> over a large table is the classic). In DirectQuery, storage engine requests become SQL sent to the source instead of xmSQL scans. Performance Analyzer and DAX Studio's server timings show the split.</p>
+<pre><code class="language-sql">-- Roughly what the storage engine runs for Net Sales by Category in 2026 (xmSQL, simplified)
+SELECT 'Product'[Category], SUM ( 'Sales'[Net Amount] )
+FROM 'Sales'
+  LEFT OUTER JOIN 'Product' ON 'Sales'[Product Key] = 'Product'[Product Key]
+  LEFT OUTER JOIN 'Date'    ON 'Sales'[Order Date Key] = 'Date'[Date Key]
+WHERE 'Date'[Year] = 2026;</code></pre>
+
+<h2>How one visual query travels down the stack</h2>
+<p>Take a bar chart of <em>Net Sales</em> by Category, filtered to 2026, on the "Sales Overview" report.</p>
+<ol>
+<li><strong>Consumption.</strong> The visual generates a DAX query against the "Sales &amp; Inventory" model.</li>
+<li><strong>Query.</strong> The formula engine resolves <em>Net Sales</em> to <code>SUM ( Sales[Net Amount] )</code> and the year filter to a filter on Date, then asks the storage engine for one data cache.</li>
+<li><strong>Semantic engine.</strong> The storage engine needs Sales[Net Amount], Sales[Product Key], Sales[Order Date Key], Product[Category] and Date[Year]. Any column not already in memory is transcoded.</li>
+<li><strong>Storage.</strong> Transcoding reads those columns from the Parquet files of the framed version of <code>gold.fact_sales</code>, <code>gold.dim_product</code> and <code>gold.dim_date</code> in OneLake. V-Order and healthy row groups make this fast.</li>
+<li><strong>Back up.</strong> The scan returns a few rows (one per category), the formula engine assembles the result, and the visual renders.</li>
+</ol>
+<pre><code class="language-dax">EVALUATE
+SUMMARIZECOLUMNS (
+    'Product'[Category],
+    TREATAS ( { 2026 }, 'Date'[Year] ),
+    "Net Sales", [Net Sales]
+)</code></pre>
+<p>A notebook can take the same path. Semantic link evaluates the measure through the same engine, so the number matches the report exactly:</p>
+<pre><code class="language-python">import sempy.fabric as fabric
+
+df = fabric.evaluate_measure(
+    "Sales &amp; Inventory",
+    measure="Net Sales",
+    groupby_columns=["Product[Category]"],
+)</code></pre>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Fix performance at the lowest layer that causes it. Do not rewrite DAX to compensate for small files, and do not compact tables to compensate for a measure full of callbacks.</p></div>
+<div class="callout callout--open"><strong>Open question</strong><p>Does Direct Lake change the case for one big denormalized table over a star? Fewer joins, but more columns to transcode and wider memory footprints. See <a href="open-questions.html">Open questions</a>.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/engine-layers.html">Engine layer cake</a> follows this exact visual down through DAX, the semantic engine, Direct Lake and the Delta files.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

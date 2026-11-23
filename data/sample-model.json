@@ -1111,7 +1111,7 @@
      "description": "yyyymmdd"
     },
     {
-     "name": "date",
+     "name": "calendar_date",
      "type": "date",
      "key": "BK"
     },
@@ -2801,7 +2801,7 @@
    "transform": "pass-through"
   },
   {
-   "from": "gold.dim_date.date",
+   "from": "gold.dim_date.calendar_date",
    "to": "semantic.Date.Date",
    "transform": "rename"
   },

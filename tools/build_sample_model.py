@@ -186,7 +186,7 @@ E(f"{b}.region", f"{s}.region"); E(f"{b}.budget_amount", f"{s}.budget_amount", "
 # --------------------------------------------------------------------- gold
 GLD = {}
 GLD["date"] = T("gold", "dbo", "dim_date", "dimension", [
-    ("date_key", "int", "SK", "yyyymmdd"), ("date", "date", "BK"), ("month_start", "date", None), ("month_name", "varchar", None),
+    ("date_key", "int", "SK", "yyyymmdd"), ("calendar_date", "date", "BK"), ("month_start", "date", None), ("month_name", "varchar", None),
     ("quarter", "varchar", None), ("fiscal_year", "int", None), ("is_weekend", "bit", None)],
     grain="One row per calendar day", scd="Type 0 (generated)", generated=True,
     description="Generated calendar. Role-plays as order date, ship date, snapshot date and budget month.")
@@ -273,7 +273,7 @@ E(f"{s}.region", f"{g}.region"); E(f"{s}.budget_amount", f"{g}.budget_amount")
 # ----------------------------------------------------------------- semantic
 SEM = {}
 sem_map = {
-    "Date": (GLD["date"], [("Date", "date"), ("Month", "month_start"), ("Month Name", "month_name"), ("Quarter", "quarter"),
+    "Date": (GLD["date"], [("Date", "calendar_date"), ("Month", "month_start"), ("Month Name", "month_name"), ("Quarter", "quarter"),
                            ("Fiscal Year", "fiscal_year"), ("date_key", "date_key")]),
     "Customer": (GLD["cus"], [("Customer", "customer_name"), ("Segment", "segment"), ("Region", "region"), ("City", "city"),
                               ("State", "state"), ("customer_key", "customer_key")]),

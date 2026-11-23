@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="guide" data-page="semantic-models">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semantic model preparation · Data Model Lab</title>
+<meta name="description" content="Star in, star out. Relationships and cardinality, role-playing dates, measures and measure tables, hiding keys, time intelligence, RLS, and what belongs in the warehouse versus DAX.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 05</p>
+    <h1>Semantic model preparation</h1>
+    <p class="lede">The semantic model is where structure becomes a user interface. Star in, star out: gold hands over a clean star, and the model adds relationships, measures, names and security without reshaping the data.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>Star in, star out</h2>
+<p>Each model table should map to one gold table, with friendly names applied at the model boundary. For the "Sales &amp; Inventory" model:</p>
+<table>
+<thead><tr><th>Model table</th><th>Gold source</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td>Date</td><td><code>dim_date</code></td><td>Marked date table; plays order and ship date</td></tr>
+<tr><td>Customer</td><td><code>dim_customer</code></td><td>Type 2; as-was region plus current region</td></tr>
+<tr><td>Product</td><td><code>dim_product</code></td><td>Type 1; category drives Budget</td></tr>
+<tr><td>Warehouse</td><td><code>dim_warehouse</code></td><td>Shared by Sales and Inventory</td></tr>
+<tr><td>Salesperson</td><td><code>dim_salesperson</code></td><td>Also the natural RLS anchor</td></tr>
+<tr><td>Sales</td><td><code>fact_sales</code></td><td>Order line grain; all columns hidden</td></tr>
+<tr><td>Inventory</td><td><code>fact_inventory_daily</code></td><td>Daily snapshot; semi-additive</td></tr>
+<tr><td>Budget</td><td><code>fact_budget</code></td><td>Month x category x region</td></tr>
+<tr><td>Measures</td><td>none</td><td>Home for every measure</td></tr>
+</tbody>
+</table>
+<p>If the model needs a Power Query step, a calculated column or a calculated table to make the star work, that is a sign the fix belongs upstream. In Direct Lake it is not even an option: Direct Lake tables have no Power Query, and calculated columns on them are not supported (check current documentation, as Direct Lake capabilities have been expanding).</p>
+
+<h2>Relationships and cardinality</h2>
+<p>The default is one-to-many, single direction, with the dimension filtering the fact. Departures from the default should each have a stated reason.</p>
+<table>
+<thead><tr><th>From (one)</th><th>To (many)</th><th>Cardinality</th><th>Direction</th><th>Active</th></tr></thead>
+<tbody>
+<tr><td>Date[Date Key]</td><td>Sales[Order Date Key]</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Date[Date Key]</td><td>Sales[Ship Date Key]</td><td>1 : *</td><td>Single</td><td>No</td></tr>
+<tr><td>Customer[Customer Key]</td><td>Sales[Customer Key]</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Product[Product Key]</td><td>Sales, Inventory</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Warehouse[Warehouse Key]</td><td>Sales, Inventory</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Salesperson[Salesperson Key]</td><td>Sales[Salesperson Key]</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Date[Date Key]</td><td>Inventory[Date Key]</td><td>1 : *</td><td>Single</td><td>Yes</td></tr>
+<tr><td>Product[Category]</td><td>Budget[Product Category]</td><td>* : *</td><td>Single (Product filters Budget)</td><td>Yes</td></tr>
+<tr><td>Date[Year Month]</td><td>Budget[Year Month]</td><td>* : *</td><td>Single (Date filters Budget)</td><td>Yes</td></tr>
+<tr><td>Customer[Region]</td><td>Budget[Region]</td><td>* : *</td><td>Single (Customer filters Budget)</td><td>Yes</td></tr>
+</tbody>
+</table>
+<p><strong>Many-to-many</strong> cardinality is acceptable for a fact at a coarser grain than its dimension, as with Budget. Keep it single direction so the dimension filters the fact and never the reverse.</p>
+<p><strong>Bidirectional</strong> filtering is acceptable in narrow cases: a dimension-to-bridge relationship in a true many-to-many pattern, or a small dimension that must show only members with data. Even then, prefer <code>CROSSFILTER</code> inside the specific measure that needs it, so the behavior does not leak into every query. Bidirectional relationships across a model create ambiguous filter paths, and the engine will deactivate relationships to resolve them, often in ways nobody intended.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>If you are reaching for a bidirectional relationship to make a visual "work," check the grain first. The usual cause is a fact at a different grain than assumed or a missing conformed dimension.</p></div>
+
+<h2>Role-playing dates</h2>
+<p><code>fact_sales</code> has two dates. There are two ways to model that:</p>
+<table>
+<thead><tr><th></th><th>One Date table, inactive relationship</th><th>Separate Order Date and Ship Date tables</th></tr></thead>
+<tbody>
+<tr><td>Model size</td><td>One date table</td><td>Two (date tables are small, so this rarely matters)</td></tr>
+<tr><td>User experience</td><td>One Date to slice by; ship-date views come from specific measures</td><td>Two clearly named tables to slice by</td></tr>
+<tr><td>Slice by both roles at once</td><td>Not possible ("ordered in March, shipped in April")</td><td>Natural</td></tr>
+<tr><td>Measure count</td><td>A ship-date variant per measure that needs one</td><td>No extra measures</td></tr>
+<tr><td>Time intelligence</td><td>One marked date table</td><td>Each table must be marked and kept in sync</td></tr>
+</tbody>
+</table>
+<p>Use the inactive relationship when the second role is needed in a handful of measures. Duplicate the table when users genuinely analyze by both roles or many measures need the second role.</p>
+<pre><code class="language-dax">Sales by Ship Date =
+CALCULATE (
+    [Net Sales],
+    USERELATIONSHIP ( Sales[Ship Date Key], 'Date'[Date Key] )
+)</code></pre>
+<p>In Direct Lake, check whether your model can map the same Delta table to two model tables. If it cannot, the alternatives are a physical copy of <code>dim_date</code> (cheap) or a view, which on the SQL endpoint triggers DirectQuery fallback and is unavailable on Direct Lake on OneLake.</p>
+
+<h2>Measures, folders and hidden keys</h2>
+<p>Every number a user sees should be an explicit measure. Implicit measures (dragging a numeric column and letting the visual sum it) cannot be governed, behave wrongly for semi-additive and non-additive columns, and are disabled once you add calculation groups. Set the model to discourage implicit measures and hide the underlying fact columns.</p>
+<pre><code class="language-dax">Net Sales    = SUM ( Sales[Net Amount] )
+Gross Sales  = SUM ( Sales[Gross Amount] )
+Discount     = SUM ( Sales[Discount Amount] )
+Units        = SUM ( Sales[Quantity] )
+Cost         = SUM ( Sales[Cost Amount] )
+Gross Margin = [Net Sales] - [Cost]
+Margin %     = DIVIDE ( [Gross Margin], [Net Sales] )
+Net Sales PY = CALCULATE ( [Net Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) )
+YoY %        = DIVIDE ( [Net Sales] - [Net Sales PY], [Net Sales PY] )</code></pre>
+<p>Organize with a dedicated Measures table and display folders (Sales, Margin, Time Comparison, Inventory, Budget). Then hide everything a report author should not touch: every <code>Key</code> column, <code>valid_from</code>, <code>valid_to</code>, <code>is_current</code>, hash and audit columns, and raw fact columns. Set sort-by columns (Month Name by Month Number), data categories, and format strings on measures rather than in visuals. Write a description on every measure; Copilot and data agents read them.</p>
+
+<h2>Time intelligence and semi-additive measures</h2>
+<p>Mark Date as the date table, ensure it has one contiguous row per day covering full years, and turn off auto date/time so the model does not grow a hidden date table per date column. Standard functions such as <code>SAMEPERIODLASTYEAR</code> and <code>DATESYTD</code> then work against it. Calculation groups can replace the explosion of PY, YTD and YoY variants for every base measure; they cost some transparency (format strings and precedence need care), so introduce them once the base measure list is stable. Microsoft has also been previewing calendar-based time intelligence for week-based and retail calendars; treat it as worth evaluating rather than a default.</p>
+<p>Inventory needs a closing balance, not a sum over days:</p>
+<pre><code class="language-dax">On Hand Units =
+VAR LastDayWithData =
+    LASTNONBLANK ( 'Date'[Date], CALCULATE ( SUM ( Inventory[On Hand Qty] ) ) )
+RETURN
+    CALCULATE ( SUM ( Inventory[On Hand Qty] ), LastDayWithData )</code></pre>
+<p><code>LASTNONBLANK</code> avoids the classic <code>LASTDATE</code> bug, where the current month shows blank because its last calendar day has no snapshot yet. On very large snapshots, a variant that finds the maximum snapshot date once can be faster; measure before optimizing.</p>
+
+<h2>Aggregations, security and what belongs where</h2>
+<p><strong>Aggregations.</strong> User-defined aggregation tables (an Import aggregate over a DirectQuery detail table) are a mature pattern for very large DirectQuery models. With Direct Lake on well-maintained Delta tables, the need is smaller; when you do need a pre-aggregated table, build it in gold as an <code>agg_</code> table so it is tested like any other.</p>
+<p><strong>Row-level security.</strong> Define roles in the model, filtering dimension tables (Salesperson or Customer[Region]), never fact tables directly. Filtering the dimension lets the relationship do the work and keeps the rule in one place.</p>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>For Direct Lake on the SQL analytics endpoint, row-level or object-level security defined in the SQL endpoint or Warehouse forces queries to fall back to DirectQuery, because the semantic engine cannot apply SQL security when it reads Delta files directly. Keep RLS in the semantic model for Direct Lake. OneLake security is maturing as a storage-level alternative; check how your Direct Lake flavor honors it before relying on it.</p></div>
+<table>
+<thead><tr><th>Logic</th><th>Warehouse or lakehouse</th><th>Semantic model (DAX)</th></tr></thead>
+<tbody>
+<tr><td>Row-level arithmetic (<code>net_amount</code>)</td><td>Yes</td><td>No</td></tr>
+<tr><td>SCD history, surrogate keys, unknown members</td><td>Yes</td><td>No</td></tr>
+<tr><td>Static bands and groupings (price band)</td><td>Yes, as a dimension column</td><td>Only if it depends on a user selection</td></tr>
+<tr><td>Ratios (<em>Margin %</em>)</td><td>Store the components</td><td>Yes</td></tr>
+<tr><td>Time comparisons (<em>Net Sales PY</em>, <em>YoY %</em>)</td><td>No</td><td>Yes</td></tr>
+<tr><td>Currency conversion</td><td>Yes, when the rate is fixed per transaction</td><td>Yes, when the user picks the rate date or currency</td></tr>
+</tbody>
+</table>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>If it is computed per row and does not depend on filter context, push it upstream. If it depends on what the user selected, it is a measure.</p></div>
+<div class="callout callout--open"><strong>Open question</strong><p>As semantic link puts DAX measures in reach of notebooks and metrics layers appear in other tools, should measure definitions live only in the semantic model? See <a href="open-questions.html">Open questions</a>.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/star-schema.html">Star schema explorer</a> shows active and inactive relationships, and the <a href="../explore/column-lineage.html">Column lineage tracer</a> follows a measure such as <em>Margin %</em> back to its source columns.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

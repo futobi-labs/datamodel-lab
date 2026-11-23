@@ -18,7 +18,7 @@ Plain static HTML, CSS and JavaScript. No build step.
 - `assets/css/site.css` is the one stylesheet, with light and dark themes and the layer color vocabulary.
 - `assets/js/model.js` loads `data/sample-model.json` and indexes it (column ids, upstream/downstream traversal, table-level edges).
 - D3 is pinned: `d3@7.9.0` from cdnjs and `d3-sankey@0.12.3` from jsDelivr.
-- `.github/workflows/pages.yml` publishes on every push to `main`.
+- `.github/workflows/pages.yml` builds the site and publishes it to the `gh-pages` branch on every push to `main`; Pages serves that branch.
 
 ## The sample model
 
