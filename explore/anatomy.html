@@ -300,9 +300,9 @@
   }
 
   function organR(t) {
-    if (t.kind === "measure-table") return thick("semantic") * 0.23;
+    if (t.kind === "measure-table") return thick("semantic") * 0.26;
     if (t.layer === "report") return thick("report") * 0.42;
-    return thick("semantic") * (0.16 + Math.min(0.12, t.cols.length * 0.009));
+    return thick("semantic") * (0.18 + Math.min(0.13, t.cols.length * 0.01));
   }
   function tableCenter(t) { return P(t.th, rAt(t.layer, t.depth)); }
   function colPos(c) {
@@ -549,7 +549,7 @@
 
   function cellLayer(p) { return p.e.t < 0.5 ? p.e.from.layer : p.e.to.layer; }
   function drawParticles(k) {
-    var base = 2.1 * (1 + Math.log2(Math.max(1, k)) * 0.35) / k;
+    var base = 2.6 * (1 + Math.log2(Math.max(1, k)) * 0.5) / k;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
     particles.forEach(function (p) {
@@ -823,9 +823,9 @@
     var h = '<p class="eyebrow">Specimen</p><h3>' + DML.esc(model.model.name) + "</h3>";
     h += "<p>" + tables.length + " structures, " + cols.length + " columns and " + edges.length + " vessels, drawn from the shared sample model.</p><ul class=\"mapping\">";
     ORDER.forEach(function (l) {
-      h += '<li><span class="dot" style="background:' + DML.layerColor(l) + '"></span><b>' + TISSUE[l].name + "</b> is " + DML.esc(model.layerById[l].name.toLowerCase()) + ". " + DML.esc(TISSUE[l].why) + "</li>";
+      h += '<li><span class="dot" style="background:' + DML.layerColor(l) + '"></span><b>' + TISSUE[l].name + "</b> stands for " + DML.esc(model.layerById[l].name.toLowerCase()) + ". " + DML.esc(TISSUE[l].why) + "</li>";
     });
-    h += '<li><span class="dot" style="background:#e33"></span><b>Blood</b> is the data. Cells move inward along column lineage and change shape at every real transform.</li></ul>';
+    h += '<li><span class="dot" style="background:#e33"></span><b>Blood</b> stands for the data. Cells move inward along column lineage and change shape at every real transform.</li></ul>';
     h += '<p class="muted">Try: Follow a cell, then zoom out and Pump a load.</p>';
     panel.innerHTML = h;
   }
