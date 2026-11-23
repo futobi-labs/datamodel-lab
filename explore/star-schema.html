@@ -96,9 +96,9 @@
   function positions() {
     var m = model, P = {};
     if (view === "Constellation") {
-      P.Sales = [260, 390]; P.Inventory = [740, 390]; P.Budget = [500, 105];
-      P.Date = [500, 390]; P.Customer = [100, 130]; P.Salesperson = [100, 640];
-      P.Product = [500, 640]; P.Warehouse = [900, 640];
+      P.Sales = [200, 390]; P.Inventory = [800, 390]; P.Budget = [740, 115];
+      P.Date = [500, 390]; P.Customer = [130, 115]; P.Salesperson = [130, 640];
+      P.Product = [500, 640]; P.Warehouse = [870, 640];
       return P;
     }
     var rels = m.relationships.filter(function (r) { return r.fact === view; });
