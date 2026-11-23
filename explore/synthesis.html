@@ -422,16 +422,18 @@
   }
   function drawSlice(v, stride, selSet) {
     var s = v.s, u = v.u, z = u * LZ, l = zoneAt(u), col = colorAt(u), NF = fibers.length;
-    var near = Math.min(1, 5 / v.d);
+    var near = Math.min(1, 5 / v.d), close = Math.max(0, Math.min(1, (v.d - 0.35) / 0.9));
+    if (close <= 0) return;
+    
     // faint glass on each key pane
     if (quad(-HX, -HY, HX, HY, z, Q)) {
-      ctx.globalAlpha = (P.camZ < 0 ? 0.012 : 0.004) + 0.008 * near; ctx.fillStyle = col; ctx.beginPath(); pathQuad(Q); ctx.fill();
+      ctx.globalAlpha = close * ((P.camZ < 0 ? 0.012 : 0.004) + 0.008 * near); ctx.fillStyle = col; ctx.beginPath(); pathQuad(Q); ctx.fill();
     }
     // table outlines once grains have settled in this band
     var su = settleU(l), z0 = ZONE[l][0], z1 = ZONE[l][1];
     if (l !== "source" ? u >= su - 0.02 : u >= z0 + (z1 - z0) * 0.6) {
       var ramp = Math.min(1, (u - (su - 0.02)) / 0.04), isLabel = s === LABEL[l];
-      if (l === "gold" || l === "semantic") drawLinks(l, z, (isLabel ? 0.75 : 0.12) * ramp * (0.4 + 0.6 * near));
+      if (l === "gold" || l === "semantic") drawLinks(l, z, close * (isLabel ? 0.75 : 0.12) * ramp * (0.4 + 0.6 * near));
       tables.forEach(function (t) {
         if (t.layer !== l) return;
         var r = rects[t.id];
@@ -439,15 +441,15 @@
         var hot = (sel && sel.id === t.id) || (hover && hover.id === t.id);
         var dim = selSet && !selSet.tables[t.id];
         var a = (isLabel ? 0.8 : 0.16) * ramp * (0.35 + 0.65 * near) * (dim ? 0.25 : 1) * (hot ? 1.6 : 1);
-        ctx.globalAlpha = Math.min(1, a); ctx.strokeStyle = col;
+        ctx.globalAlpha = close * Math.min(1, a); ctx.strokeStyle = col;
         ctx.lineWidth = (t.kind === "fact" || t.kind === "measure-table") ? 1.8 : 1;
         ctx.beginPath(); pathQuad(Q); ctx.stroke();
-        if (isLabel && (t.kind === "fact" || t.kind === "measure-table")) { ctx.globalAlpha = Math.min(1, a) * 0.12; ctx.fillStyle = col; ctx.fill(); }
+        if (isLabel && (t.kind === "fact" || t.kind === "measure-table")) { ctx.globalAlpha = close * Math.min(1, a) * 0.12; ctx.fillStyle = col; ctx.fill(); }
         if (isLabel) {
           var px = Math.hypot(Q[2] - Q[0], Q[3] - Q[1]);
           if (px > 46) {
             var fs = Math.max(9, Math.min(15, Q[8] * 0.05));
-            ctx.globalAlpha = Math.min(1, (dim ? 0.3 : 0.95) * near * 1.3);
+            ctx.globalAlpha = close * Math.min(1, (dim ? 0.3 : 0.95) * near * 1.3);
             ctx.fillStyle = "#f2f5f8"; ctx.font = (t.kind === "fact" || t.kind === "measure-table" ? "650 " : "500 ") + fs + "px Inter, sans-serif";
             ctx.textAlign = "left"; ctx.textBaseline = "bottom";
             ctx.fillText(DML.tableLabel(t), Q[0] + 1, Q[1] - 3);
@@ -458,7 +460,7 @@
     // the zone title, on the first pane of each band
     if (s === TITLE[l] && proj(-HX + 0.05, -HY + 0.05, z)) {
       var fs2 = Math.max(10, Math.min(46, PR[2] * 0.09));
-      ctx.globalAlpha = Math.min(0.9, 0.25 + near); ctx.fillStyle = l === "source" ? SAND : LC[l];
+      ctx.globalAlpha = close * Math.min(0.9, 0.25 + near); ctx.fillStyle = l === "source" ? SAND : LC[l];
       ctx.font = "700 " + fs2 + "px Inter, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
       ctx.fillText(model.layerById[l].name.toUpperCase() + "  ·  " + STAGE[l].verb, PR[0], PR[1]);
     }
@@ -468,7 +470,7 @@
     var passes = selSet ? [0, 1] : [1];
     passes.forEach(function (pass) {
       ctx.fillStyle = col;
-      ctx.globalAlpha = pass === 0 ? 0.06 : Math.min(1, 0.22 + 0.7 * near);
+      ctx.globalAlpha = close * (pass === 0 ? 0.06 : Math.min(1, 0.22 + 0.7 * near));
       var st = pass === 0 ? stride * 3 : stride;
       for (var i = (s * 7) % st; i < NF; i += st) {
         var m = SM[base + i]; if (!m) continue;
