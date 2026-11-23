@@ -104,7 +104,7 @@
       .nodeId(function (d) { return d.id; })
       .nodeAlign(function (d) { return d.col; })
       .nodeWidth(12).nodePadding(9)
-      .nodeSort(function (a, b) { return d3.ascending(a.t.kind, b.t.kind) || d3.ascending(a.t.name, b.t.name); })
+      .iterations(64) // let the layout relax node order to cut crossings
       .extent([[8, 34], [W - 170, H - 10]]);
     var g = sankey({ nodes: nodes, links: links });
     g.nodes.forEach(function (n) { if (n.y1 - n.y0 < 4) { n.y1 = n.y0 + 6; } });

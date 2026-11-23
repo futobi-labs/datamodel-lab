@@ -104,7 +104,7 @@
     var stage = document.getElementById("stage");
     stage.innerHTML = "";
     var root = d3.hierarchy(hierarchy()).sum(function (d) { return d.value || 0; })
-      .sort(function (a, b) { return b.height - a.height || b.value - a.value; });
+      .sort(function (a, b) { return a.data.kind === "layer" ? a.data.l.order - b.data.l.order : (b.height - a.height || b.value - a.value); });
     d3.partition().size([H, (root.height + 1) * W / 4])(root);
     // icicle with depth along x; show 3 levels at a time
     var svg = d3.select(stage).append("svg").attr("viewBox", [0, 0, W, H]).attr("role", "img").attr("aria-label", "Zoomable icicle of layers, tables and columns");
@@ -148,7 +148,7 @@
       rect.transition(tr).attr("width", function (d) { return Math.max(0, d.t.x1 - d.t.x0 - 1); }).attr("height", function (d) { return Math.max(0, d.t.y1 - d.t.y0 - 1); });
       label.transition(tr).attr("y", function (d) { return Math.min(20, (d.t.y1 - d.t.y0) / 2 + 4); })
         .attr("opacity", function (d) { return (d.t.y1 - d.t.y0) > 15 && d.t.x0 >= -1 && d.t.x0 < W ? 1 : 0; });
-      sub.transition(tr).attr("y", 36).attr("opacity", function (d) { return (d.t.y1 - d.t.y0) > 44 && d.data.kind !== "col" ? 1 : 0; });
+      sub.transition(tr).attr("y", 36).attr("opacity", function (d) { return (d.t.y1 - d.t.y0) > 54 && d.data.kind !== "col" ? 1 : 0; });
       var path = p.ancestors().reverse().map(function (a) { return a.data.name; }).join(" › ");
       document.getElementById("crumb").textContent = path;
     }
