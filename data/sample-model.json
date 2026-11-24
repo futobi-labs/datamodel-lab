@@ -20,7 +20,7 @@
    "order": 1,
    "platform": "Lakehouse (Files / shortcuts / views)",
    "fabric": "Shortcuts, mirrored tables, pipeline copies",
-   "description": "Raw, source-shaped, append-friendly. Adds only audit columns."
+   "description": "Raw, source-shaped, stored as-is. Adds only audit columns."
   },
   {
    "id": "silver",

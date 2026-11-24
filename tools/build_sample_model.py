@@ -23,7 +23,7 @@ LAYERS = [
     {"id": "source", "name": "Source", "order": 0, "platform": "Operational systems",
      "fabric": "ERP database, CRM API, files", "description": "Systems of record. Owned by someone else; read, never written."},
     {"id": "bronze", "name": "Bronze", "order": 1, "platform": "Lakehouse (Files / shortcuts / views)",
-     "fabric": "Shortcuts, mirrored tables, pipeline copies", "description": "Raw, source-shaped, append-friendly. Adds only audit columns."},
+     "fabric": "Shortcuts, mirrored tables, pipeline copies", "description": "Raw, source-shaped, stored as-is. Adds only audit columns."},
     {"id": "silver", "name": "Silver", "order": 2, "platform": "Lakehouse Delta tables",
      "fabric": "Notebooks or Warehouse T-SQL", "description": "Cleaned, typed, de-duplicated, conformed business entities."},
     {"id": "gold", "name": "Gold", "order": 3, "platform": "Warehouse (star schema)",
