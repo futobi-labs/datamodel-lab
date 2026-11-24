@@ -14,7 +14,7 @@
   var SITE = {
     name: "Data Model Lab",
     tagline: "Structure, lineage and the craft of modeling",
-    repo: "https://github.com/tannerspaulding/datamodel-lab",
+    repo: "https://github.com/futobi-labs/datamodel-lab",
     sister: {
       name: "Data Viz Lab",
       blurb: "The sibling lab: exploratory charts, Few, Tufte and new forms.",
@@ -150,7 +150,7 @@
     bars.appendChild(el("a", { href: labsRoot, "aria-label": "Futobi Labs" }));
     nm.appendChild(bars);
     hud.appendChild(nm);
-    hud.appendChild(el("a", { class: "home", href: "https://github.com/tannerspaulding", rel: "noopener", "aria-label": "Tanner Spaulding on GitHub", text: "↗" }));
+    hud.appendChild(el("a", { class: "home", href: "https://github.com/futobi-labs", rel: "noopener", "aria-label": "Futobi Labs on GitHub", text: "↗" }));
     document.body.appendChild(hud);
   }
 

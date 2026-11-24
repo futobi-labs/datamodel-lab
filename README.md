@@ -1,14 +1,14 @@
 # Data Model Lab
 
 An exploratory notebook on data modeling, published with GitHub Pages at
-https://tannerspaulding.github.io/datamodel-lab/ (and `/datamodel-lab/` on the custom domain once it is set).
+https://labs.tannerspaulding.com/datamodel-lab/ (and `/datamodel-lab/` on the custom domain once it is set).
 
 Two halves:
 
 - **Field Guide** (`guide/`): what's commonplace in modeling today. Medallion architecture, dimensional modeling, SCDs, conformed dimensions, semantic models, analytic engine layering, naming, metadata-driven pipelines, open questions.
 - **Explorations** (`explore/`): interactive D3 views of model *structure*: lineage flow (Sankey), column lineage tracer, star schema explorer, medallion stack (zoomable icicle), bus matrix, engine layer cake.
 
-Sister site: [dataviz-lab](https://github.com/tannerspaulding/dataviz-lab).
+Sister site: [dataviz-lab](https://github.com/futobi-labs/dataviz-lab).
 
 ## How it's built
 
