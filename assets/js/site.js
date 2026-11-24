@@ -75,12 +75,18 @@
   var root = html.getAttribute("data-root") || "./";
   var sectionId = html.getAttribute("data-section") || "";
   var pageSlug = html.getAttribute("data-page") || "";
+  // Reading pages (field guide, sample model) wear the Futobi Labs Test Print
+  // skin: <html data-skin="testprint"> plus assets/css/testprint.css. They are
+  // light only, with a Test Print header and lab bar. Explorations don't set it.
+  var skin = html.getAttribute("data-skin") === "testprint";
+  var labsRoot = root + "../";
 
   // ---------- theme ----------
   function getStoredTheme() { try { return localStorage.getItem("dml-theme"); } catch (e) { return null; } }
   function storeTheme(t) { try { localStorage.setItem("dml-theme", t); } catch (e) { /* ignore */ } }
   var stored = getStoredTheme();
-  if (stored === "light" || stored === "dark") html.setAttribute("data-theme", stored);
+  if (skin) html.setAttribute("data-theme", "light");
+  else if (stored === "light" || stored === "dark") html.setAttribute("data-theme", stored);
 
   function currentTheme() {
     var t = html.getAttribute("data-theme");
@@ -118,10 +124,41 @@
     '<rect x="9" y="6" width="14" height="6" rx="2" fill="var(--l-gold)"/>' +
     '<circle cx="16" cy="3.2" r="2.2" fill="var(--l-semantic)"/></svg>';
 
+  // ---------- Test Print header and lab bar (skinned pages) ----------
+  function buildSkinHeader(host) {
+    var header = el("header", { class: "site-header" });
+    var top = el("div", { class: "tp-top" });
+    top.appendChild(el("a", { class: "wm", href: root || "./", html: "<b>Futobi</b><span>/ Data Model Lab</span>" }));
+    var nav = el("nav", { class: "tp-nav", "aria-label": "Main" });
+    SITE.sections.forEach(function (s) {
+      var a = el("a", { href: href(s), text: s.title });
+      if (s.id === sectionId) { a.classList.add("is-active"); if (!pageSlug) a.setAttribute("aria-current", "page"); }
+      nav.appendChild(a);
+    });
+    nav.appendChild(el("a", { href: SITE.repo, rel: "noopener", text: "GitHub ↗" }));
+    top.appendChild(nav);
+    header.appendChild(top);
+    host.replaceWith(header);
+
+    var hud = el("nav", { class: "tp-hud", "aria-label": "Labs" });
+    hud.appendChild(el("div", { class: "num", html: "02<small>/03</small>" }));
+    var nm = el("div", { class: "nm" });
+    nm.appendChild(el("b", { text: SITE.name }));
+    var bars = el("div", { class: "bars" });
+    bars.appendChild(el("a", { href: labsRoot + "dataviz-lab/", "aria-label": "Data Viz Lab" }));
+    bars.appendChild(el("a", { href: root || "./", "aria-current": "page", "aria-label": "Data Model Lab" }));
+    bars.appendChild(el("a", { href: labsRoot, "aria-label": "Futobi Labs" }));
+    nm.appendChild(bars);
+    hud.appendChild(nm);
+    hud.appendChild(el("a", { class: "home", href: "https://github.com/tannerspaulding", rel: "noopener", "aria-label": "Tanner Spaulding on GitHub", text: "↗" }));
+    document.body.appendChild(hud);
+  }
+
   // ---------- header ----------
   function buildHeader() {
     var host = document.getElementById("site-header");
     if (!host) return;
+    if (skin) { buildSkinHeader(host); return; }
     var header = el("header", { class: "site-header" });
     var inner = el("div", { class: "site-header__inner" });
     var brand = el("a", { class: "brand", href: root || "./", html: MARK + "<span>Data Model Lab</span>" + '<span class="brand__sub">/ structure &amp; lineage</span>' });
@@ -275,7 +312,10 @@
       frag.appendChild(pager);
     }
     var foot = el("footer", { class: "site-footer" });
-    foot.appendChild(el("div", { class: "site-footer__inner", html:
+    if (skin) foot.appendChild(el("div", { class: "site-footer__inner", html:
+      "<span>Futobi Labs &middot; Data Model Lab &middot; Tanner Spaulding &middot; sample data is generic and invented</span>" +
+      '<span><a href="' + SITE.sister.url + '">' + SITE.sister.name + ' ↗</a> &middot; <a href="' + SITE.repo + '">Source on GitHub</a></span>' }));
+    else foot.appendChild(el("div", { class: "site-footer__inner", html:
       "<span>Data Model Lab &middot; an exploratory notebook on data modeling. Sample data is generic and invented.</span>" +
       '<span><a href="' + SITE.sister.url + '">' + SITE.sister.name + ' ↗</a> &middot; <a href="' + SITE.repo + '">Source on GitHub</a></span>' }));
     frag.appendChild(foot);
