@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="open-questions">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open questions &amp; ideation · Data Model Lab</title>
+<meta name="description" content="Unsettled questions in lakehouse and semantic modeling, each with a short take, plus ideas worth trying in the explorations.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 09</p>
+    <h1>Open questions &amp; ideation</h1>
+    <p class="lede">The parts of modeling practice that are not settled yet, each with a short take. The takes are positions to argue with, not conclusions, and several will probably change as the platforms do.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>Layers and architecture</h2>
+<h3>Is silver still worth it when bronze is views?</h3>
+<p>With mirroring and shortcuts, bronze is often a set of zero-copy views over current source data. If silver is then mostly renames and casts, materializing it looks like ceremony.</p>
+<p><strong>Take:</strong> materialize silver when more than one consumer reads the cleaned entities, or when it does real entity work (deduplication, survivorship, the header-to-line join behind <code>silver.sales_order_line</code>). Leave it as views when gold is its only reader and the logic is trivial. Either way, keep the contract tests; they matter more than whether the layer is physical.</p>
+<h3>Data Vault in a lakehouse?</h3>
+<p>Data Vault (hubs, links, satellites) separates integration from presentation and handles many sources and auditability well. It also triples the table count and pushes all the dimensional work into a later layer anyway.</p>
+<p><strong>Take:</strong> worth it when you integrate many overlapping sources with strong audit requirements and a team that already knows the method. For a handful of sources feeding one star, a well-tested silver layer does the same integration job with far less machinery. Vault-style hash keys and insert-only satellites are worth borrowing on their own.</p>
+
+<h2>Modeling for the engine</h2>
+<h3>One big table or a star for Direct Lake?</h3>
+<p>One big denormalized table (OBT) removes joins, which some engines love. Direct Lake transcodes per column, so an OBT means repeating every customer and product attribute on every sales row.</p>
+<p><strong>Take:</strong> star, still. VertiPaq is built for star joins, conformed dimensions are what make drill-across work, and repeating attributes on the fact inflates the columns that must be paged into memory. OBT is a reasonable serving shape for an ML feature table or a single-purpose export, not for a shared semantic model.</p>
+<h3>SCD Type 2 in the lake or in the warehouse?</h3>
+<p>Delta <code>MERGE</code> in Spark is mature, and Change Data Feed can supply the changes. Warehouse T-SQL offers multi-table transactions and is more familiar to SQL-first teams.</p>
+<p><strong>Take:</strong> put it wherever the rest of gold is written. The worst option is computing history in one engine and facts in another, because point-in-time lookups then span two transactional systems.</p>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Several of these questions are moving targets because the platform is. Direct Lake on OneLake, Warehouse <code>MERGE</code>, <code>IDENTITY</code> columns, OneLake security and calendar-based time intelligence all arrived or changed status during 2025. Revisit a take when its underlying feature reaches general availability.</p></div>
+
+<h2>Where semantic logic lives</h2>
+<h3>Semantic model, metrics layer, or code?</h3>
+<p>Measures used to live only in the semantic model. Now semantic link lets notebooks evaluate them directly, other platforms offer metric definitions in their catalogs, and transformation tools have semantic layers of their own.</p>
+<p><strong>Take:</strong> for a Fabric estate, keep measure definitions in the semantic model and make other consumers call it (semantic link for notebooks, XMLA or Excel for analysts) rather than re-deriving <em>Net Sales</em> in Python. Two definitions of a metric will diverge; the question is only when.</p>
+<h3>AI agents reading semantic models</h3>
+<p>Copilot and Fabric data agents answer questions by reading model metadata: table and column names, descriptions, synonyms, relationships and measures.</p>
+<p><strong>Take:</strong> this makes naming and descriptions a functional requirement, not documentation. A model with hidden keys, clear measure names and a description on every measure is noticeably easier for an agent to query correctly. The open part is how much modeling should bend toward agents (fewer, broader measures; explicit verified answers) versus toward human report authors.</p>
+<div class="callout callout--open"><strong>Open question</strong><p>If agents become a primary consumer, does the semantic model need its own test suite of natural-language questions with expected answers, in the way gold has contract tests? Probably, and nobody has a standard shape for it yet.</p></div>
+
+<h2>Beyond BI</h2>
+<h3>Modeling for BI and ML at the same time</h3>
+<p>BI wants conformed, slowly changing, human-named dimensions. Machine learning wants point-in-time-correct, wide, per-entity feature rows with no leakage from the future.</p>
+<p><strong>Take:</strong> they share more than it seems. A Type 2 <code>dim_customer</code> with trustworthy <code>valid_from</code> and <code>valid_to</code> is exactly what a point-in-time feature join needs. Build feature tables as a serving layer on top of gold, reusing its keys and history, rather than as a parallel pipeline from bronze.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>When a question here comes up on a real project, write down the deciding factor you used. Over a few projects that list becomes a better guide than any of these takes.</p></div>
+
+<h2>Ideas to try</h2>
+<p>Things worth building or testing on the sample model, most of them as explorations:</p>
+<ul>
+<li><strong>Impact analysis.</strong> In the <a href="../explore/column-lineage.html">Column lineage tracer</a>, pick a silver column such as <code>silver.sales_order_line.discount_amount</code> and see every gold column, measure and report that would break if it changed.</li>
+<li><strong>Weight lineage by what flows.</strong> The <a href="../explore/lineage-flow.html">Lineage flow</a> weights edges by column count. Try weighting by row volume or refresh time instead, and see which tables dominate.</li>
+<li><strong>Toggle the inactive relationship.</strong> In the <a href="../explore/star-schema.html">Star schema explorer</a>, switch the active date role from order to ship date and see which measures change meaning.</li>
+<li><strong>Grain lint.</strong> In the <a href="../explore/medallion-stack.html">Medallion stack</a>, flag any gold column that does not hold one value at its table's declared grain.</li>
+<li><strong>Empty cells as questions.</strong> In the <a href="../explore/bus-matrix.html">Bus matrix</a>, click an empty cell (Inventory by Customer) and explain why it is empty, rather than leaving users to discover it.</li>
+<li><strong>Animate a cold query.</strong> In the <a href="../explore/engine-layers.html">Engine layer cake</a>, compare a cold Direct Lake query after framing with a warm one.</li>
+<li><strong>Model diffs from Git.</strong> Semantic models saved as TMDL are plain text. A visual diff of relationships and measures between two commits would make model reviews far easier.</li>
+<li><strong>Contract cards.</strong> Generate a one-page contract (grain, keys, tests, freshness) for each silver and gold table from metadata, and link it from every exploration node.</li>
+</ul>
+<div class="callout callout--see"><strong>See it</strong><p>All eight explorations read the same sample model: <a href="../explore/lineage-flow.html">Lineage flow</a>, <a href="../explore/column-lineage.html">Column lineage tracer</a>, <a href="../explore/star-schema.html">Star schema explorer</a>, <a href="../explore/medallion-stack.html">Medallion stack</a>, <a href="../explore/bus-matrix.html">Bus matrix</a> <a href="../explore/engine-layers.html">Engine layer cake</a>, <a href="../explore/synthesis.html">Data synthesis</a> and <a href="../explore/semantic-engine.html">Semantic engine</a>.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

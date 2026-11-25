@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="slowly-changing-dimensions">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slowly changing dimensions · Data Model Lab</title>
+<meta name="description" content="SCD Type 0 through 7, which ones you actually need, and how to load Type 2 with hash-diff change detection, inferred members and point-in-time lookups.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 03</p>
+    <h1>Slowly changing dimensions</h1>
+    <p class="lede">Most dimensions need two behaviors at once: overwrite what was wrong, and keep history of what genuinely changed. The type numbers are just names for those choices, and the choice is made per attribute, not per table.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>The types at a glance</h2>
+<table>
+<thead><tr><th>Type</th><th>Behavior</th><th>History kept</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Retain the original value; never update</td><td>The first value only</td><td>First order date, original acquisition channel</td></tr>
+<tr><td>1</td><td>Overwrite in place</td><td>None</td><td>Corrections, descriptions, attributes nobody analyzes historically (all of <code>dim_product</code> in the sample)</td></tr>
+<tr><td>2</td><td>Expire the current row, insert a new version with a new surrogate key</td><td>Full</td><td>Customer region and segment in <code>dim_customer</code></td></tr>
+<tr><td>3</td><td>Add a "previous value" column</td><td>One prior value</td><td>A one-off reorganization: <code>region</code> and <code>region_prior</code></td></tr>
+<tr><td>4</td><td>Split fast-changing attributes into a mini-dimension (Kimball), or keep history in a separate table (common usage)</td><td>Full, in a separate table</td><td>Customer credit band or demographic bands that change monthly</td></tr>
+<tr><td>6</td><td>Type 2 rows plus a Type 1 "current" column overwritten on every version (1 + 2 + 3)</td><td>Full, with as-is available</td><td><code>region</code> (as-was) beside <code>current_region</code> (as-is)</td></tr>
+</tbody>
+</table>
+<p>Two more appear in Kimball's later writing. <strong>Type 5</strong> is a Type 4 mini-dimension plus a Type 1 outrigger on the base dimension that points at the current mini-dimension row. <strong>Type 7</strong> puts both the surrogate key and the durable business key on the fact, so the model can join to all versions for as-was reporting and to a current-rows view for as-is. Both are useful in specific cases and rarely the first thing you need.</p>
+<p>Note that "Type 4" means different things to different authors. Say which one you mean in your design notes.</p>
+
+<h2>Which ones you actually need</h2>
+<p>Types 1 and 2 cover the vast majority of real dimensions. The real design work is deciding, attribute by attribute, which behavior applies. <code>dim_customer</code> is called "Type 2" in the sample because <code>region</code> and <code>segment</code> are tracked, but a fix to a misspelled <code>customer_name</code> should still be a Type 1 update applied across all versions. Otherwise a typo correction creates a fake history event.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Track history only for an attribute where someone can name the question that needs it ("sales by the region the customer was in at the time"). Every tracked attribute multiplies rows and makes change detection noisier.</p></div>
+<p>Decide up front whether reports default to <em>as-was</em> (the attribute value at the time of the fact, which Type 2 gives you through the fact's surrogate key) or <em>as-is</em> (today's value applied to all history). Most sales reporting wants as-was for territory and as-is for names and hierarchies. Type 6 columns are the cheapest way to offer both in one dimension table; label them clearly in the semantic model so users know which one they are slicing by.</p>
+
+<h2>Change detection with a hash diff</h2>
+<p>Comparing every tracked column one by one is verbose and slow. Instead, compute a hash over the tracked attributes in staging and compare one column. Keep separate hashes for Type 2 attributes and Type 1 attributes so each change takes the right path.</p>
+<pre><code class="language-sql">-- T-SQL (Fabric Warehouse): staging snapshot of silver.customer with a Type 2 hash
+SELECT
+    customer_id,
+    customer_name,
+    region,
+    segment,
+    HASHBYTES('SHA2_256', CONCAT_WS('|',
+        COALESCE(region,  '~'),
+        COALESCE(segment, '~'))) AS row_hash
+FROM silver.customer;</code></pre>
+<pre><code class="language-sql">-- Spark SQL equivalent
+SELECT customer_id, customer_name, region, segment,
+       sha2(concat_ws('|', coalesce(region, '~'), coalesce(segment, '~')), 256) AS row_hash
+FROM silver.customer;</code></pre>
+<div class="callout callout--warn"><strong>Watch out</strong><p><code>CONCAT_WS</code> skips NULLs, so without the <code>COALESCE</code> sentinel the values <code>('East', NULL)</code> and <code>(NULL, 'East')</code> hash identically. Also compute the hash in one engine only. Spark and T-SQL format dates, decimals and floats differently as strings, so a hash written by a notebook will not match one computed in the Warehouse, and every row will look changed.</p></div>
+
+<h2>Loading Type 2</h2>
+<p>The load has the same five steps in any engine: stage the silver snapshot with its hash, find current rows whose hash differs, expire them, insert new versions for changed and brand-new business keys, then apply Type 1 updates across all versions.</p>
+<p>The two-step pattern below works in Fabric Warehouse today and is easy to read. The trick is in the insert: after the expire step, a changed customer no longer has a current row, so the same "no current row" test picks up both new and changed keys.</p>
+<pre><code class="language-sql">DECLARE @load_ts datetime2(6) = SYSUTCDATETIME();
+DECLARE @max_key bigint = (SELECT COALESCE(MAX(customer_key), 0) FROM gold.dim_customer);
+
+BEGIN TRANSACTION;
+
+-- 1. Expire current versions whose tracked attributes changed
+UPDATE d
+SET    valid_to = @load_ts,
+       is_current = 0
+FROM   gold.dim_customer AS d
+JOIN   stg.customer AS s ON s.customer_id = d.customer_id
+WHERE  d.is_current = 1
+  AND  d.row_hash &lt;&gt; s.row_hash;
+
+-- 2. Insert a version for every key with no current row (new or just expired)
+INSERT INTO gold.dim_customer
+    (customer_key, customer_id, customer_name, region, segment, current_region,
+     row_hash, valid_from, valid_to, is_current)
+SELECT @max_key + ROW_NUMBER() OVER (ORDER BY s.customer_id),
+       s.customer_id, s.customer_name, s.region, s.segment, s.region,
+       s.row_hash, @load_ts, '9999-12-31', 1
+FROM   stg.customer AS s
+LEFT JOIN gold.dim_customer AS d
+       ON d.customer_id = s.customer_id AND d.is_current = 1
+WHERE  d.customer_id IS NULL;
+
+-- 3. Type 1 and Type 6 attributes: overwrite on every version
+UPDATE d
+SET    customer_name  = s.customer_name,
+       current_region = s.region
+FROM   gold.dim_customer AS d
+JOIN   stg.customer AS s ON s.customer_id = d.customer_id
+WHERE  d.customer_name &lt;&gt; s.customer_name
+   OR  d.current_region &lt;&gt; s.region;
+
+COMMIT TRANSACTION;</code></pre>
+<p>In a lakehouse, Delta's <code>MERGE INTO</code> can do expire and insert in one statement with the "staged updates" trick: union the changed rows a second time with a NULL merge key so they fall through to the insert branch.</p>
+<pre><code class="language-sql">-- Spark SQL on Delta. stg_customer carries a precomputed new_key.
+MERGE INTO gold.dim_customer AS t
+USING (
+    SELECT s.customer_id AS merge_key, s.* FROM stg_customer AS s
+    UNION ALL
+    SELECT NULL AS merge_key, s.*
+    FROM stg_customer AS s
+    JOIN gold.dim_customer AS d
+      ON d.customer_id = s.customer_id AND d.is_current = true AND d.row_hash &lt;&gt; s.row_hash
+) AS u
+ON t.customer_id = u.merge_key AND t.is_current = true
+WHEN MATCHED AND t.row_hash &lt;&gt; u.row_hash THEN
+    UPDATE SET t.is_current = false, t.valid_to = current_timestamp()
+WHEN NOT MATCHED THEN
+    INSERT (customer_key, customer_id, customer_name, region, segment, current_region,
+            row_hash, valid_from, valid_to, is_current)
+    VALUES (u.new_key, u.customer_id, u.customer_name, u.region, u.segment, u.region,
+            u.row_hash, current_timestamp(), timestamp'9999-12-31 00:00:00', true);</code></pre>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Fabric Warehouse gained a T-SQL <code>MERGE</code> statement relatively recently (it arrived in preview during 2025). Check its status and documented limitations in your tenant before standardizing on it. The two-step <code>UPDATE</code> plus <code>INSERT</code> inside an explicit transaction is atomic, works everywhere, and is easier to debug a step at a time. In a Lakehouse, Delta <code>MERGE INTO</code> from Spark is mature; just remember the SQL analytics endpoint is read-only, so SCD loads there must run in Spark.</p></div>
+
+<h2>Late-arriving dimensions and inferred members</h2>
+<p>Sometimes a fact arrives before its dimension row: an order references a customer the CRM has not synced yet. Mapping it to <code>-1</code> keeps totals right but loses the link forever. An <strong>inferred member</strong> keeps it: insert a placeholder dimension row with the business key, "Unknown" attributes and an <code>is_inferred</code> flag, and point the fact at it.</p>
+<pre><code class="language-sql">INSERT INTO gold.dim_customer
+    (customer_key, customer_id, customer_name, region, segment, current_region,
+     row_hash, valid_from, valid_to, is_current, is_inferred)
+SELECT @max_key + ROW_NUMBER() OVER (ORDER BY x.customer_id),
+       x.customer_id, 'Unknown', 'Unknown', 'Unknown', 'Unknown',
+       NULL, '1900-01-01', '9999-12-31', 1, 1
+FROM (SELECT DISTINCT customer_id FROM silver.sales_order_line) AS x
+LEFT JOIN gold.dim_customer AS d ON d.customer_id = x.customer_id
+WHERE d.customer_id IS NULL;</code></pre>
+<p>When the real customer arrives, update the inferred row in place (Type 1 style) and clear the flag, rather than expiring it and creating a version. The placeholder never represented a real state of the customer, so it should not appear as history.</p>
+<p>The opposite case, a late-arriving <em>fact</em> (an order from last month loaded today), is handled by the point-in-time lookup below: it finds the version that was valid on the order date, not today's.</p>
+
+<h2>Point-in-time lookups for facts</h2>
+<p>Facts join to Type 2 dimensions on the business key and the effective date range, with <code>valid_to</code> treated as exclusive:</p>
+<pre><code class="language-sql">LEFT JOIN gold.dim_customer AS c
+       ON c.customer_id = s.customer_id
+      AND s.order_date &gt;= c.valid_from
+      AND s.order_date &lt;  c.valid_to</code></pre>
+<p>Three details make this reliable. Give each business key's first version a <code>valid_from</code> of <code>1900-01-01</code>, so historical facts loaded before the dimension existed still find a row. Use the source system's change timestamp for <code>valid_from</code> when it has a trustworthy one; the load timestamp is a fallback that makes history only as precise as your schedule. And never let ranges for one business key overlap or leave gaps; add a test for it.</p>
+<div class="callout callout--open"><strong>Open question</strong><p>Should SCD2 history live in the lake (Delta <code>MERGE</code>, maybe driven by Change Data Feed) or in the warehouse (T-SQL transactions)? Both work; the deciding factor is which engine owns the rest of gold. See <a href="open-questions.html">Open questions</a>.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/star-schema.html">Star schema explorer</a> shows <code>dim_customer</code> with its surrogate key, business key and validity columns, and how <code>fact_sales</code> points at a specific version.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="lineage-flow">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lineage flow · Data Model Lab</title>
+<meta name="description" content="A Sankey of every table from source to report, weighted by the columns that flow between them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .node rect { stroke: var(--bg-raised); stroke-width: 1; cursor: pointer; }
+  .link { fill: none; stroke-opacity: .22; transition: stroke-opacity .15s; }
+  .is-focus .link { stroke-opacity: .05; }
+  .is-focus .link.on { stroke-opacity: .6; }
+  .is-focus .node.off { opacity: .25; }
+  .node text { font-size: 11.5px; pointer-events: none; }
+  .colhead { font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 01</p>
+    <h1>Lineage flow</h1>
+    <p class="lede">Every table in the sample model, source to report. Band width is the number of columns that flow from one table to the next, so you can see where a model fans in, where it fans out, and where one table carries everything.</p>
+  </header>
+
+  <div class="viz-controls">
+    <span class="seg" role="group" aria-label="Band width">
+      <button type="button" data-weight="columns" aria-pressed="true">Weight by columns</button>
+      <button type="button" data-weight="equal" aria-pressed="false">Equal weight</button>
+    </span>
+    <label>Focus table <select id="focus"><option value="">(none)</option></select></label>
+    <button class="btn" type="button" id="clear">Clear focus</button>
+  </div>
+
+  <div class="viz-shell">
+    <div class="viz-stage" id="stage"></div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <h3>Hover or click a table</h3>
+      <p>Hover a table to light up everything it feeds and everything that feeds it. Click to pin it and see its columns here.</p>
+      <div class="legend" id="legend"></div>
+    </aside>
+  </div>
+
+  <section class="viz-about prose">
+    <h2>What to look for</h2>
+    <ul>
+      <li><strong>Fan-in at silver.</strong> Two bronze order tables collapse into one <code>silver.sales_order_line</code>. That join is the single most important piece of logic in the model, so it belongs in exactly one place.</li>
+      <li><strong>Fan-out at gold.</strong> One silver entity feeds a dimension and a fact. Surrogate-key lookups are why: <code>fact_sales</code> pulls a little from every dimension's source.</li>
+      <li><strong>The orphan.</strong> <code>dim_date</code> has no upstream at all; it is generated. Every model has a few of these and lineage tools tend to hide them.</li>
+      <li><strong>The narrowing at the semantic layer.</strong> Most measures read one or two columns. If a measure pulls from ten, that is usually logic that wants to live in gold.</li>
+    </ul>
+    <p>The diagram is drawn from <a href="../model/">the sample model's metadata</a>, so pointing it at a real model is a matter of replacing one JSON file.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+
+<script>
+(function () {
+  var COLS = { source: 0, bronze: 1, silver: 2, gold: 3, semantic: 4, measures: 5, report: 6 };
+  var COLNAMES = ["Source", "Bronze", "Silver", "Gold", "Semantic tables", "Measures", "Reports"];
+  var weight = "columns", pinned = null, model, svg, linkSel, nodeSel;
+
+  function colOf(t) { return t.kind === "measure-table" ? COLS.measures : COLS[t.layer]; }
+
+  DML.load().then(function (m) {
+    model = m;
+    var sel = document.getElementById("focus");
+    m.tables.forEach(function (t) {
+      var o = document.createElement("option"); o.value = t.id; o.textContent = m.layerById[t.layer].name + " · " + DML.tableLabel(t);
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () { pin(sel.value || null); });
+    document.getElementById("clear").addEventListener("click", function () { sel.value = ""; pin(null); });
+    document.querySelectorAll("[data-weight]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        weight = b.getAttribute("data-weight");
+        document.querySelectorAll("[data-weight]").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+        draw();
+      });
+    });
+    var lg = document.getElementById("legend");
+    m.layers.forEach(function (l) { var s = document.createElement("span"); s.className = "chip chip--" + l.id; s.textContent = l.name; lg.appendChild(s); });
+    draw();
+    document.addEventListener("themechange", draw);
+  }).catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+
+  function draw() {
+    var W = 1280, H = 820, m = model;
+    var stage = document.getElementById("stage");
+    stage.innerHTML = "";
+    var nodes = m.tables.map(function (t) { return { id: t.id, t: t, col: colOf(t) }; });
+    var links = m.tableEdges.map(function (e) { return { source: e.from, target: e.to, value: weight === "columns" ? e.count : 1, e: e }; });
+    // generated tables (dim_date) need a value to get a height
+    var sankey = d3.sankey()
+      .nodeId(function (d) { return d.id; })
+      .nodeAlign(function (d) { return d.col; })
+      .nodeWidth(12).nodePadding(9)
+      .iterations(64) // let the layout relax node order to cut crossings
+      .extent([[8, 34], [W - 170, H - 10]]);
+    var g = sankey({ nodes: nodes, links: links });
+    g.nodes.forEach(function (n) { if (n.y1 - n.y0 < 4) { n.y1 = n.y0 + 6; } });
+
+    svg = d3.select(stage).append("svg").attr("viewBox", [0, 0, W, H]).attr("role", "img")
+      .attr("aria-label", "Sankey diagram of table lineage from source to report");
+
+    var colX = d3.rollup(g.nodes, function (v) { return d3.min(v, function (d) { return d.x0; }); }, function (d) { return d.col; });
+    svg.append("g").selectAll("text").data(Array.from(colX)).join("text")
+      .attr("class", "colhead t-muted").attr("x", function (d) { return d[1]; }).attr("y", 18).text(function (d) { return COLNAMES[d[0]]; });
+
+    linkSel = svg.append("g").selectAll("path").data(g.links).join("path")
+      .attr("class", "link").attr("d", d3.sankeyLinkHorizontal())
+      .attr("stroke", function (d) { return DML.layerColor(d.source.t.layer); })
+      .attr("stroke-width", function (d) { return Math.max(1, d.width); })
+      .on("mousemove", function (ev, d) {
+        var tx = Object.keys(d.e.transforms).map(function (k) { return DML.esc(k) + " ×" + d.e.transforms[k]; }).join("<br>");
+        DML.tip.show("<b>" + DML.esc(DML.tableLabel(d.source.t)) + " → " + DML.esc(DML.tableLabel(d.target.t)) + "</b><br>" + d.e.count + " column edge" + (d.e.count > 1 ? "s" : "") + "<br>" + tx, ev);
+      })
+      .on("mouseleave", DML.tip.hide);
+
+    nodeSel = svg.append("g").selectAll("g").data(g.nodes).join("g").attr("class", "node")
+      .on("mouseenter", function (ev, d) { if (!pinned) focus(d.id); })
+      .on("mousemove", function (ev, d) { DML.tip.show("<b>" + DML.esc(DML.tableLabel(d.t)) + "</b><br>" + d.t.columns.length + " columns" + (d.t.grain ? "<br>Grain: " + DML.esc(d.t.grain) : ""), ev); })
+      .on("mouseleave", function () { DML.tip.hide(); if (!pinned) focus(null); })
+      .on("click", function (ev, d) { document.getElementById("focus").value = d.id; pin(d.id); });
+    nodeSel.append("rect").attr("x", function (d) { return d.x0; }).attr("y", function (d) { return d.y0; })
+      .attr("width", function (d) { return d.x1 - d.x0; }).attr("height", function (d) { return d.y1 - d.y0; })
+      .attr("rx", 2).attr("fill", function (d) { return DML.layerColor(d.t.layer); });
+    nodeSel.append("text").attr("x", function (d) { return d.x1 + 5; }).attr("y", function (d) { return (d.y0 + d.y1) / 2; })
+      .attr("dy", "0.35em").text(function (d) { return DML.tableLabel(d.t); });
+
+    if (pinned) focus(pinned);
+  }
+
+  function focus(id) {
+    if (!svg) return;
+    if (!id) { svg.classed("is-focus", false); linkSel.classed("on", false); nodeSel.classed("off", false); return; }
+    var tr = model.traceTable(id);
+    svg.classed("is-focus", true);
+    nodeSel.classed("off", function (d) { return !tr.tables.has(d.id); });
+    linkSel.classed("on", function (d) { return tr.tables.has(d.source.id) && tr.tables.has(d.target.id) && pathTouches(tr, d); });
+  }
+  function pathTouches(tr, d) {
+    // a table edge is on the path if any traced column edge connects the two tables
+    for (var i = 0; i < model.columnLineage.length; i++) {
+      var e = model.columnLineage[i];
+      if (e.fromTable === d.source.id && e.toTable === d.target.id && tr.edges.has(e.i)) return true;
+    }
+    return false;
+  }
+  function pin(id) {
+    pinned = id;
+    focus(id);
+    var p = document.getElementById("panel");
+    if (!id) { p.innerHTML = "<h3>Hover or click a table</h3><p>Hover a table to light up everything it feeds and everything that feeds it. Click to pin it and see its columns here.</p>"; return; }
+    var t = model.tableById[id], tr = model.traceTable(id);
+    var up = [], down = [];
+    tr.tables.forEach(function (x) {
+      if (x === id) return;
+      var o = model.tableById[x];
+      (model.layerById[o.layer].order < model.layerById[t.layer].order || (o.layer === t.layer && t.kind === "measure-table") ? up : down).push(o);
+    });
+    p.innerHTML = DML.tablePanel(model, t) +
+      "<h4>Upstream (" + up.length + ")</h4><p>" + (up.map(function (o) { return DML.esc(DML.tableLabel(o)); }).join(", ") || '<span class="muted">none: generated or a source</span>') + "</p>" +
+      "<h4>Downstream (" + down.length + ")</h4><p>" + (down.map(function (o) { return DML.esc(DML.tableLabel(o)); }).join(", ") || '<span class="muted">none</span>') + "</p>" +
+      '<p><a href="column-lineage.html#' + encodeURIComponent(id) + '">Trace its columns →</a></p>';
+  }
+})();
+</script>
+</body>
+</html>

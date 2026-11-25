@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="medallion-stack">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medallion stack · Data Model Lab</title>
+<meta name="description" content="A zoomable stack of the lakehouse: layer, table, column. Drill in and back out.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .cell rect { stroke: var(--bg-raised); stroke-width: 1.5; cursor: pointer; }
+  .cell text { pointer-events: none; font-size: 12px; fill: #fff; }
+  .cell text.sub { font-size: 10.5px; opacity: .85; }
+  .cell.col text { font-family: var(--font-mono); font-size: 11px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0 0 14px; }
+  .stat { background: var(--bg-raised); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; border-top: 4px solid var(--c); }
+  .stat b { display: block; font-size: 22px; letter-spacing: -.02em; }
+  .stat span { color: var(--ink-3); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 04</p>
+    <h1>Medallion stack</h1>
+    <p class="lede">The lakehouse as a zoomable stack. Each band is a layer, each block a table, each sliver a column, sized by column count. Click to drill in; click the left band to climb back out.</p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+  <div class="viz-controls">
+    <span class="seg" role="group" aria-label="Scope">
+      <button type="button" data-scope="medallion" aria-pressed="true">Bronze, silver, gold</button>
+      <button type="button" data-scope="all" aria-pressed="false">Source to report</button>
+    </span>
+    <span class="viz-note" id="crumb" style="margin:0"></span>
+  </div>
+  <div class="viz-shell">
+    <div class="viz-stage" id="stage"></div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <h3>Click a block</h3>
+      <p>Layers zoom to their tables, tables zoom to their columns. The panel shows what each layer owns and what a table's grain is.</p>
+    </aside>
+  </div>
+
+  <section class="viz-about prose">
+    <h2>Reading the stack</h2>
+    <p>The widths tell a story you can check against your own platform. Bronze is wide and shallow: many tables, source-shaped, each carrying its two audit columns. Silver is narrower, because the order header and lines became one entity. Gold widens again with surrogate keys and SCD columns, but the number of <em>tables</em> drops to the handful a person can hold in their head. If your gold layer has more tables than your silver layer, it is worth asking which of them are really reports.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+
+<script>
+(function () {
+  var model, scope = "medallion", W = 1000, H = 640, focusNode = null;
+
+  DML.load().then(function (m) {
+    model = m;
+    stats();
+    document.querySelectorAll("[data-scope]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        scope = b.getAttribute("data-scope");
+        document.querySelectorAll("[data-scope]").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+        draw();
+      });
+    });
+    draw();
+    document.addEventListener("themechange", draw);
+  }).catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+
+  function stats() {
+    var host = document.getElementById("stats");
+    model.layers.forEach(function (l) {
+      var ts = model.tables.filter(function (t) { return t.layer === l.id; });
+      var cols = d3.sum(ts, function (t) { return t.columns.length; });
+      var d = document.createElement("div"); d.className = "stat"; d.style.setProperty("--c", DML.layerColor(l.id));
+      d.innerHTML = "<b>" + ts.length + " <small style=\"font-size:13px;color:var(--ink-3);font-weight:500\">tables</small></b><span>" + DML.esc(l.name) + " · " + cols + " columns</span>";
+      host.appendChild(d);
+    });
+  }
+
+  function hierarchy() {
+    var layers = model.layers.filter(function (l) { return scope === "all" || ["bronze", "silver", "gold"].indexOf(l.id) >= 0; });
+    return {
+      name: scope === "all" ? "Whole model" : "Lakehouse", kind: "root",
+      children: layers.map(function (l) {
+        return {
+          name: l.name, kind: "layer", layer: l.id, l: l,
+          children: model.tables.filter(function (t) { return t.layer === l.id; }).map(function (t) {
+            return { name: DML.tableLabel(t), kind: "table", layer: l.id, t: t,
+              children: t.columns.map(function (c) { return { name: c.name, kind: "col", layer: l.id, c: c, t: t, value: 1 }; }) };
+          })
+        };
+      })
+    };
+  }
+
+  function draw() {
+    var stage = document.getElementById("stage");
+    stage.innerHTML = "";
+    var root = d3.hierarchy(hierarchy()).sum(function (d) { return d.value || 0; })
+      .sort(function (a, b) { return a.data.kind === "layer" ? a.data.l.order - b.data.l.order : (b.height - a.height || b.value - a.value); });
+    d3.partition().size([H, (root.height + 1) * W / 4])(root);
+    // icicle with depth along x; show 3 levels at a time
+    var svg = d3.select(stage).append("svg").attr("viewBox", [0, 0, W, H]).attr("role", "img").attr("aria-label", "Zoomable icicle of layers, tables and columns");
+    var cell = svg.selectAll("g").data(root.descendants()).join("g")
+      .attr("class", function (d) { return "cell" + (d.data.kind === "col" ? " col" : ""); });
+    var rect = cell.append("rect");
+    var label = cell.append("text").attr("x", 8);
+    var sub = cell.append("text").attr("class", "sub").attr("x", 8);
+
+    function fill(d) {
+      if (d.depth === 0) return DML.css("--ink-2");
+      var base = d3.color(DML.layerColor(d.data.layer));
+      if (d.data.kind === "table") return base.darker(0.25);
+      if (d.data.kind === "col") {
+        var c = d.data.c;
+        if (c.key) return base.darker(0.6);
+        return c.name.charAt(0) === "_" ? d3.color(DML.css("--ink-3")) : base.brighter(0.15);
+      }
+      return base;
+    }
+    rect.attr("fill", fill)
+      .on("click", function (ev, d) { zoom(d.depth === 0 || d === focusNode ? (d.parent || root) : d); detail(d); })
+      .on("mousemove", function (ev, d) { DML.tip.show("<b>" + DML.esc(d.data.name) + "</b><br>" + tipText(d), ev); })
+      .on("mouseleave", DML.tip.hide);
+    label.text(function (d) { return d.data.name; });
+    sub.text(function (d) { return d.data.kind === "col" ? (d.data.c.key || "") : d.value + " columns"; });
+
+    function zoom(p) {
+      focusNode = p;
+      var kx = W / 3 / (W / 4); // each level in partition is W/4 wide; we show 3 levels per screen
+      root.each(function (d) {
+        d.t = {
+          x0: (d.y0 - p.y0) * kx,
+          x1: (d.y1 - p.y0) * kx,
+          y0: (d.x0 - p.x0) / (p.x1 - p.x0) * H,
+          y1: (d.x1 - p.x0) / (p.x1 - p.x0) * H
+        };
+      });
+      var tr = svg.transition().duration(reduce() ? 0 : 650);
+      cell.transition(tr).attr("transform", function (d) { return "translate(" + d.t.x0 + "," + d.t.y0 + ")"; });
+      rect.transition(tr).attr("width", function (d) { return Math.max(0, d.t.x1 - d.t.x0 - 1); }).attr("height", function (d) { return Math.max(0, d.t.y1 - d.t.y0 - 1); });
+      label.transition(tr).attr("y", function (d) { return Math.min(20, (d.t.y1 - d.t.y0) / 2 + 4); })
+        .attr("opacity", function (d) { return (d.t.y1 - d.t.y0) > 15 && d.t.x0 >= -1 && d.t.x0 < W ? 1 : 0; });
+      sub.transition(tr).attr("y", 36).attr("opacity", function (d) { return (d.t.y1 - d.t.y0) > 54 && d.data.kind !== "col" ? 1 : 0; });
+      var path = p.ancestors().reverse().map(function (a) { return a.data.name; }).join(" › ");
+      document.getElementById("crumb").textContent = path;
+    }
+    function reduce() { return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    zoom(root);
+  }
+
+  function tipText(d) {
+    if (d.data.kind === "layer") return DML.esc(d.data.l.description);
+    if (d.data.kind === "table") return DML.esc(d.data.t.grain || d.data.t.description || "");
+    if (d.data.kind === "col") return DML.esc(d.data.c.expression || d.data.c.type) + (d.data.c.key ? " · " + d.data.c.key : "");
+    return d.value + " columns";
+  }
+
+  function detail(d) {
+    var p = document.getElementById("panel");
+    if (d.data.kind === "layer") {
+      var l = d.data.l, ts = model.tables.filter(function (t) { return t.layer === l.id; });
+      p.innerHTML = '<p class="eyebrow" style="color:' + DML.layerColor(l.id) + '">Layer</p><h3>' + DML.esc(l.name) + "</h3><p>" + DML.esc(l.description) + '</p><dl class="kv"><dt>Lives in</dt><dd>' + DML.esc(l.platform) + "</dd><dt>Built with</dt><dd>" + DML.esc(l.fabric) + "</dd><dt>Tables</dt><dd>" + ts.length + "</dd></dl><h4>Tables</h4><ul>" + ts.map(function (t) { return "<li>" + DML.esc(DML.tableLabel(t)) + "</li>"; }).join("") + "</ul>";
+    } else if (d.data.kind === "table" || d.data.kind === "col") {
+      p.innerHTML = DML.tablePanel(model, d.data.t) + '<p><a href="column-lineage.html#' + encodeURIComponent(d.data.kind === "col" ? d.data.c.id : d.data.t.id) + '">Trace in the column lineage tracer →</a></p>';
+    }
+  }
+})();
+</script>
+</body>
+</html>

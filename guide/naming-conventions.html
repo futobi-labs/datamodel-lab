@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="naming-conventions">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naming conventions · Data Model Lab</title>
+<meta name="description" content="A naming scheme for lakehouse layers, tables, keys, dates, booleans, audit columns and semantic model measures that survives five years and three teams.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 07</p>
+    <h1>Naming conventions</h1>
+    <p class="lede">A naming convention is compression for context. A good name tells you the layer, the role and the type of a column before you open the table, and a consistent one lets tools and people guess correctly.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>Principles</h2>
+<ul>
+<li><strong>Names carry layer, role and type.</strong> <code>gold.dim_customer.customer_key</code> says where it lives, what the table is for and what kind of key it is.</li>
+<li><strong>Predictable beats clever.</strong> The best convention is the one a new engineer can apply correctly on day two.</li>
+<li><strong>One style per surface.</strong> <code>snake_case</code> everywhere in the lake and warehouse; friendly names with spaces where business users browse, which means the semantic model.</li>
+<li><strong>Bronze keeps the source's names.</strong> Renaming starts in silver. If bronze renames, you lose the ability to trace a column back to the source by name.</li>
+<li><strong>Abbreviate only from an agreed list.</strong> <code>qty</code> and <code>amt</code> are fine if written down once; <code>cst_rgn_cd</code> is not.</li>
+<li><strong>Singular entity names.</strong> <code>customer</code>, <code>sales_order_line</code>. Pick singular or plural once and never mix.</li>
+</ul>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>If two people would name the same new column differently under your convention, the convention has a gap. Close it in writing the first time it happens.</p></div>
+
+<h2>Schemas and table prefixes</h2>
+<p>Use one schema per layer, plus a few utility schemas, and let table names carry their role:</p>
+<table>
+<thead><tr><th>Schema or prefix</th><th>Meaning</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>bronze.</code> + <code>{source}_{object}</code></td><td>Raw landing, origin in the name</td><td><code>bronze.erp_sales_order_header</code>, <code>bronze.crm_salesperson</code>, <code>bronze.files_budget</code></td></tr>
+<tr><td><code>silver.</code> + <code>{entity}</code></td><td>Cleaned business entity, no source prefix because it may merge sources</td><td><code>silver.customer</code>, <code>silver.sales_order_line</code></td></tr>
+<tr><td><code>gold.dim_</code></td><td>Dimension</td><td><code>dim_customer</code>, <code>dim_date</code></td></tr>
+<tr><td><code>gold.fact_</code></td><td>Fact; add the snapshot period when it is a snapshot</td><td><code>fact_sales</code>, <code>fact_inventory_daily</code></td></tr>
+<tr><td><code>gold.bridge_</code></td><td>Many-to-many resolver</td><td><code>bridge_sales_credit</code></td></tr>
+<tr><td><code>gold.agg_</code></td><td>Pre-aggregated serving table</td><td><code>agg_sales_month_category</code></td></tr>
+<tr><td><code>stg.</code> or <code>stg_</code></td><td>Transient staging, safe to truncate</td><td><code>stg.customer</code></td></tr>
+<tr><td><code>meta.</code></td><td>Pipeline config, logs and registries</td><td><code>meta.load_config</code>, <code>meta.load_log</code></td></tr>
+</tbody>
+</table>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Schema-enabled lakehouses let you use real <code>bronze</code>, <code>silver</code> and <code>gold</code> schemas in one item. The other common layout is one item per layer (a bronze Lakehouse, a silver Lakehouse, a gold Warehouse), which gives cleaner security boundaries and separate deployment. Many teams also prefix Fabric item names by type (<code>LH_</code>, <code>WH_</code>, <code>NB_</code>, <code>PL_</code>, <code>SM_</code>) so the workspace list sorts itself and deployment pipelines are easier to read.</p></div>
+
+<h2>Column names</h2>
+<h3>Keys and identifiers</h3>
+<ul>
+<li><code>_key</code> is a surrogate key owned by the warehouse: <code>customer_key</code>, <code>order_date_key</code>.</li>
+<li><code>_id</code> is a business or natural key from the source: <code>customer_id</code>, <code>product_id</code>.</li>
+<li><code>_number</code> is a human-facing identifier, often a degenerate dimension: <code>order_number</code>, <code>line_number</code>.</li>
+<li>Role-playing keys put the role first: <code>order_date_key</code>, <code>ship_date_key</code>.</li>
+</ul>
+<h3>Dates and times</h3>
+<ul>
+<li><code>_date</code> for a calendar date with no time: <code>order_date</code>, <code>ship_date</code>.</li>
+<li><code>_at</code> for a timestamp: <code>modified_at</code>, <code>_ingested_at</code>. Store timestamps in UTC by default.</li>
+<li>Add <code>_utc</code> or <code>_local</code> only when both exist on the same table: <code>shipped_at_utc</code> beside <code>shipped_at_local</code>.</li>
+<li>Validity ranges use <code>valid_from</code> and <code>valid_to</code>, with <code>valid_to</code> exclusive.</li>
+</ul>
+<h3>Booleans, measures and units</h3>
+<ul>
+<li>Booleans start with <code>is_</code> or <code>has_</code>: <code>is_current</code>, <code>is_month_end</code>, <code>has_returns</code>. Never a bare <code>flag</code> or <code>active</code>.</li>
+<li>Money ends in <code>_amount</code> (<code>net_amount</code>, <code>cost_amount</code>), quantities in <code>_qty</code> or <code>quantity</code>, counts in <code>_count</code>, ratios in <code>_pct</code> or <code>_rate</code>.</li>
+<li>Put units in the name when they are ambiguous: <code>weight_kg</code>, <code>lead_time_days</code>.</li>
+</ul>
+<h3>System and audit columns</h3>
+<p>Columns added by the platform rather than the business get a leading underscore: <code>_ingested_at</code>, <code>_batch_id</code>, <code>_source_file</code>. The underscore sorts them together, signals "do not put this in a report," and makes it trivial to exclude them when generating silver column lists. Modeling columns that carry business meaning (<code>valid_from</code>, <code>is_current</code>, <code>row_hash</code>) do not get the underscore.</p>
+
+<h2>Names in the semantic model</h2>
+<p>The model is where names become user interface, so the rules change:</p>
+<ul>
+<li><strong>Tables</strong> are plain nouns without prefixes: Sales, not <code>fact_sales</code>; Customer, not <code>dim_customer</code>.</li>
+<li><strong>Columns</strong> are Title Case with spaces: Customer[Customer Name], Sales[Net Amount]. Key columns are renamed too (Customer[Customer Key]) and then hidden.</li>
+<li><strong>Measures</strong> use business language, never "Sum of". Suffixes are consistent: <em>Net Sales PY</em> for prior year, <em>YoY %</em> for growth, <em>%</em> only on ratios (<em>Margin %</em>).</li>
+<li><strong>No column and measure share a name.</strong> Hide Sales[Net Amount] and expose the measure <em>Net Sales</em>, so authors cannot drag the wrong one.</li>
+<li><strong>Rename at the model boundary,</strong> not with views. Model column names can differ from the source column names, which keeps gold clean and avoids views that would push Direct Lake on the SQL endpoint into DirectQuery fallback.</li>
+<li><strong>Write descriptions and synonyms.</strong> Copilot and data agents use them to map a question to a measure, so names and descriptions are now part of the query interface, not just documentation.</li>
+</ul>
+
+<h2>One column, end to end</h2>
+<p>Following a few columns through every layer shows the convention doing its job. Source column names are illustrative.</p>
+<table>
+<thead><tr><th>Source</th><th>Bronze</th><th>Silver</th><th>Gold</th><th>Semantic model</th></tr></thead>
+<tbody>
+<tr><td><code>erp.sales_order_line.NetAmt</code></td><td><code>NetAmt</code></td><td><code>net_amount</code> (derived: gross less discount)</td><td><code>fact_sales.net_amount</code></td><td>Sales[Net Amount] (hidden), measure <em>Net Sales</em></td></tr>
+<tr><td><code>erp.customer.CUSTNO</code></td><td><code>CUSTNO</code></td><td><code>customer_id</code></td><td><code>dim_customer.customer_id</code> plus <code>customer_key</code></td><td>Customer[Customer ID]; Customer[Customer Key] hidden</td></tr>
+<tr><td><code>erp.sales_order_header.ShipDt</code></td><td><code>ShipDt</code></td><td><code>ship_date</code></td><td><code>fact_sales.ship_date_key</code></td><td>Inactive relationship; measure <em>Sales by Ship Date</em></td></tr>
+<tr><td>none</td><td><code>_ingested_at</code>, <code>_batch_id</code></td><td>Carried for lineage</td><td>Usually dropped, or kept as <code>_loaded_at</code></td><td>Not imported</td></tr>
+</tbody>
+</table>
+
+<h2>Conventions that cause trouble</h2>
+<ul>
+<li><strong>Reserved words</strong> as column names (<code>date</code>, <code>order</code>, <code>user</code>, <code>value</code>) force quoting in every engine. <code>dim_date</code> uses <code>calendar_date</code> for this reason.</li>
+<li><strong>Spaces and special characters</strong> in lake column names need Delta column mapping and break some readers. Keep them out of the lake entirely.</li>
+<li><strong>Case.</strong> Spark resolves column names case-insensitively by default. Fabric Warehouse defaults to a case-sensitive collation, which affects string comparisons and, by default, identifiers; a case-insensitive collation can be chosen when a warehouse is created. VertiPaq compares text case-insensitively, so two business keys that differ only by case collapse into one in the model.</li>
+<li><strong>Encoding meaning in prefixes nobody maintains</strong> (Hungarian-style <code>str_</code>, <code>int_</code>) adds noise without information once types are visible in every tool.</li>
+</ul>
+<div class="callout callout--open"><strong>Open question</strong><p>Schemas in one lakehouse or one item per layer? Schemas keep cross-layer queries simple; separate items give cleaner permissions and deployment. The deciding factor is usually whether different people are allowed to read bronze and gold.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/column-lineage.html">Column lineage tracer</a> follows each sample column from source name to model name, which is the quickest way to spot a convention being broken.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

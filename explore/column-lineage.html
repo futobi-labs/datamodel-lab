@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="column-lineage">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Column lineage tracer · Data Model Lab</title>
+<meta name="description" content="Click any column or measure and trace it all the way upstream and downstream.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .tcard rect.body { fill: var(--bg-raised); stroke: var(--rule-strong); }
+  .tcard rect.head { cursor: pointer; }
+  .tcard text.title { font-size: 11.5px; font-weight: 650; fill: #fff; pointer-events: none; }
+  .row { cursor: pointer; }
+  .row rect { fill: transparent; }
+  .row:hover rect { fill: var(--bg-sunken); }
+  .row text { font-size: 10.5px; font-family: var(--font-mono); pointer-events: none; }
+  .row.hid text { fill: var(--ink-3); font-style: italic; }
+  .row.sel rect { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+  .row.on rect { fill: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .edge { fill: none; stroke: var(--ink-3); stroke-opacity: .16; stroke-width: 1; }
+  .is-trace .edge { stroke-opacity: .03; }
+  .is-trace .edge.on { stroke: var(--accent); stroke-opacity: .85; stroke-width: 1.6; }
+  .is-trace .row:not(.on):not(.sel) text { opacity: .35; }
+  .is-trace .tcard.off { opacity: .45; }
+  .lanehead { font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+  .chain { list-style: none; padding: 0; margin: 0; }
+  .chain li { padding: 5px 0 5px 10px; border-left: 3px solid var(--rule); margin: 0 0 4px; font-size: 13px; }
+  .chain code { font-size: 12px; }
+  .chain .tx { color: var(--ink-3); display: block; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 02</p>
+    <h1>Column lineage tracer</h1>
+    <p class="lede">Every column in the model, laid out by layer. Click one, a measure, or a report visual, and the whole chain lights up: where it came from, what it became, and every transformation along the way.</p>
+  </header>
+
+  <div class="viz-controls">
+    <label>Find <input type="search" id="find" list="cols" placeholder="column, measure or visual" size="30"></label>
+    <datalist id="cols"></datalist>
+    <span class="seg" role="group" aria-label="Direction">
+      <button type="button" data-dir="both" aria-pressed="true">Both ways</button>
+      <button type="button" data-dir="up" aria-pressed="false">Upstream</button>
+      <button type="button" data-dir="down" aria-pressed="false">Downstream</button>
+    </span>
+    <label><input type="checkbox" id="hideAudit"> Hide audit columns</label>
+    <button class="btn" type="button" id="clear">Clear</button>
+    <span class="viz-note" style="margin:0">Try: <a href="#" data-try="report.Sales Overview.Sales by category">Sales by category</a>, <a href="#" data-try="semantic.Measures.Margin %">Margin %</a>, <a href="#" data-try="source.erp.sales_order_line.quantity">erp quantity</a>, <a href="#" data-try="gold.dim_customer.valid_from">valid_from</a></span>
+  </div>
+
+  <div class="viz-shell">
+    <div class="viz-stage viz-stage--scroll" id="stage"></div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <h3>Pick a column</h3>
+      <p>Click any row. Click a table's colored header to trace every column in it at once.</p>
+      <p class="muted">Rows in italics are hidden in the semantic model or are system columns.</p>
+    </aside>
+  </div>
+
+  <section class="viz-about prose">
+    <h2>Why column level</h2>
+    <p>Table lineage tells you that <code>fact_sales</code> depends on <code>silver.sales_order_line</code>. Column lineage tells you that <strong>Margin %</strong> depends on <code>erp.sales_order_line.discount_pct</code> and <code>erp.product.standard_cost</code>, and on nothing from the order header. That is the question people actually ask when a number looks wrong, and it is the question impact analysis needs answered before a source column changes.</p>
+    <h2>Reading the trace</h2>
+    <ul>
+      <li>Edges carry a <em>transform</em> label: pass-through, rename, cast, lookup, derive, DAX. Hover an edge to see it. Long chains of pass-through are healthy; a derive in bronze is a smell.</li>
+      <li>Surrogate keys show their parentage honestly: <code>fact_sales.customer_key</code> traces to both the customer id <em>and</em> the order date, because a Type 2 lookup is a point-in-time join.</li>
+      <li>Measures trace through other measures. <strong>YoY %</strong> reaches the source through <strong>Net Sales PY</strong> and <strong>Net Sales</strong>.</li>
+    </ul>
+  </section>
+</main>
+<div id="site-footer"></div>
+
+<script>
+(function () {
+  var LANES = [
+    { key: "source", title: "Source" }, { key: "bronze", title: "Bronze" }, { key: "silver", title: "Silver" },
+    { key: "gold", title: "Gold" }, { key: "semantic", title: "Semantic tables" }, { key: "measures", title: "Measures" }, { key: "report", title: "Report visuals" }
+  ];
+  var CARD_W = 190, LANE_GAP = 74, ROW_H = 15, HEAD_H = 20, CARD_GAP = 14, TOP = 30;
+  var model, dir = "both", selected = [], hideAudit = false;
+
+  function laneOf(t) { return t.kind === "measure-table" ? 5 : { source: 0, bronze: 1, silver: 2, gold: 3, semantic: 4, report: 6 }[t.layer]; }
+  function isAudit(c) { return c.name.charAt(0) === "_"; }
+
+  DML.load().then(function (m) {
+    model = m;
+    var dl = document.getElementById("cols");
+    Object.keys(m.columnById).forEach(function (id) {
+      var o = document.createElement("option"); o.value = id; dl.appendChild(o);
+    });
+    document.getElementById("find").addEventListener("change", function (e) { if (m.columnById[e.target.value]) select([e.target.value]); });
+    document.querySelectorAll("[data-dir]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        dir = b.getAttribute("data-dir");
+        document.querySelectorAll("[data-dir]").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+        select(selected);
+      });
+    });
+    document.getElementById("hideAudit").addEventListener("change", function (e) { hideAudit = e.target.checked; draw(); select(selected); });
+    document.getElementById("clear").addEventListener("click", function () { select([]); });
+    document.querySelectorAll("[data-try]").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.preventDefault(); select([a.getAttribute("data-try")]); scrollTo(a.getAttribute("data-try")); });
+    });
+    draw();
+    var h = decodeURIComponent(location.hash.slice(1));
+    if (h && m.tableById[h]) { select(m.tableById[h].columns.map(function (c) { return c.id; })); scrollTo(m.tableById[h].columns[0].id); }
+    else if (h && m.columnById[h]) { select([h]); scrollTo(h); }
+  }).catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+
+  var rowPos = {}, svg, edgeSel, rowSel, cardSel;
+
+  function layout() {
+    var m = model;
+    var lanes = LANES.map(function () { return []; });
+    m.tables.forEach(function (t) { lanes[laneOf(t)].push(t); });
+    var visCols = function (t) { return t.columns.filter(function (c) { return !(hideAudit && isAudit(c)); }); };
+    // initial order: source lane by name; later lanes by barycenter of upstream rows (two sweeps)
+    lanes[0].sort(function (a, b) { return d3.ascending(a.schema + a.name, b.schema + b.name); });
+    var pos = {};
+    function place() {
+      pos = {};
+      lanes.forEach(function (ts, li) {
+        var y = TOP;
+        ts.forEach(function (t) {
+          var cols = visCols(t);
+          t._y = y; t._x = li * (CARD_W + LANE_GAP) + 10; t._h = HEAD_H + cols.length * ROW_H + 4;
+          cols.forEach(function (c, i) { pos[c.id] = { x: t._x, y: y + HEAD_H + i * ROW_H + ROW_H / 2, t: t }; });
+          y += t._h + CARD_GAP;
+        });
+      });
+    }
+    place();
+    for (var sweep = 0; sweep < 3; sweep++) {
+      for (var li = 1; li < lanes.length; li++) {
+        lanes[li].forEach(function (t) {
+          var ys = [];
+          t.columns.forEach(function (c) { (m.colUp[c.id] || []).forEach(function (e) { if (pos[e.from]) ys.push(pos[e.from].y); }); });
+          t._bary = ys.length ? d3.mean(ys) : 1e6 + t.name.length;
+        });
+        lanes[li].sort(function (a, b) { return a._bary - b._bary; });
+        place();
+      }
+    }
+    rowPos = pos;
+    var H = d3.max(lanes, function (ts) { var l = ts[ts.length - 1]; return l ? l._y + l._h : 0; }) + 20;
+    return { lanes: lanes, W: LANES.length * (CARD_W + LANE_GAP), H: H, visCols: visCols };
+  }
+
+  function draw() {
+    var m = model, L = layout();
+    var stage = document.getElementById("stage");
+    stage.innerHTML = "";
+    svg = d3.select(stage).append("svg").attr("width", L.W).attr("height", L.H).attr("viewBox", [0, 0, L.W, L.H])
+      .attr("role", "img").attr("aria-label", "Column lineage across layers");
+    svg.append("g").selectAll("text").data(LANES).join("text").attr("class", "lanehead t-muted")
+      .attr("x", function (d, i) { return i * (CARD_W + LANE_GAP) + 10; }).attr("y", 16).text(function (d) { return d.title; });
+
+    var edges = m.columnLineage.filter(function (e) { return rowPos[e.from] && rowPos[e.to]; });
+    var link = d3.linkHorizontal().x(function (d) { return d[0]; }).y(function (d) { return d[1]; });
+    edgeSel = svg.append("g").selectAll("path").data(edges).join("path").attr("class", "edge")
+      .attr("d", function (e) {
+        var a = rowPos[e.from], b = rowPos[e.to];
+        if (a.t === b.t) { // measure -> measure in the same table: loop out to the right
+          var x = a.x + CARD_W, dx = 14 + Math.min(40, Math.abs(b.y - a.y) / 6);
+          return "M" + x + "," + a.y + " C" + (x + dx) + "," + a.y + " " + (x + dx) + "," + b.y + " " + x + "," + b.y;
+        }
+        return link({ source: [a.x + CARD_W, a.y], target: [b.x, b.y] });
+      })
+      .on("mousemove", function (ev, e) { DML.tip.show("<b>" + DML.esc(e.transform) + "</b><br>" + DML.esc(e.from) + "<br>→ " + DML.esc(e.to), ev); })
+      .on("mouseleave", DML.tip.hide);
+
+    var all = [].concat.apply([], L.lanes);
+    cardSel = svg.append("g").selectAll("g").data(all).join("g").attr("class", "tcard")
+      .attr("transform", function (t) { return "translate(" + t._x + "," + t._y + ")"; });
+    cardSel.append("rect").attr("class", "body").attr("width", CARD_W).attr("height", function (t) { return t._h; }).attr("rx", 6);
+    cardSel.append("rect").attr("class", "head").attr("width", CARD_W).attr("height", HEAD_H).attr("rx", 6)
+      .attr("fill", function (t) { return DML.layerColor(t.layer); })
+      .on("click", function (ev, t) { select(L.visCols(t).map(function (c) { return c.id; })); });
+    cardSel.append("text").attr("class", "title").attr("x", 8).attr("y", 14).text(function (t) { return trunc(DML.tableLabel(t), 28); });
+
+    rowSel = cardSel.selectAll("g.row").data(function (t) { return L.visCols(t); }).join("g")
+      .attr("class", function (c) { return "row" + (c.hidden || isAudit(c) ? " hid" : ""); })
+      .attr("transform", function (c, i) { return "translate(0," + (HEAD_H + i * ROW_H) + ")"; })
+      .on("click", function (ev, c) { select(ev.shiftKey ? selected.concat([c.id]) : [c.id]); })
+      .on("mousemove", function (ev, c) {
+        var bits = [c.type];
+        if (c.key) bits.push(c.key);
+        if (c.expression) bits.push(c.expression);
+        if (c.description) bits.push(c.description);
+        DML.tip.show("<b>" + DML.esc(c.name) + "</b><br>" + bits.map(DML.esc).join("<br>"), ev);
+      })
+      .on("mouseleave", DML.tip.hide);
+    rowSel.append("rect").attr("x", 1).attr("width", CARD_W - 2).attr("height", ROW_H);
+    rowSel.append("text").attr("x", 8).attr("y", ROW_H - 4).text(function (c) { return trunc(c.name, 24); });
+    rowSel.append("text").attr("class", "t-muted").attr("x", CARD_W - 6).attr("y", ROW_H - 4).attr("text-anchor", "end")
+      .text(function (c) { return c.isMeasure ? "fx" : (c.key || ""); });
+  }
+
+  function trunc(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+  function select(ids) {
+    selected = ids.filter(function (id) { return model.columnById[id]; });
+    if (!svg) return;
+    var p = document.getElementById("panel");
+    if (!selected.length) {
+      svg.classed("is-trace", false); edgeSel.classed("on", false); rowSel.classed("on", false).classed("sel", false); cardSel.classed("off", false);
+      p.innerHTML = "<h3>Pick a column</h3><p>Click any row. Click a table's colored header to trace every column in it at once. Shift-click to add columns.</p>";
+      return;
+    }
+    var tr = model.trace(selected, { up: dir !== "down", down: dir !== "up" });
+    var sel = new Set(selected), tables = new Set();
+    tr.cols.forEach(function (c) { tables.add(model.columnById[c].table.id); });
+    svg.classed("is-trace", true);
+    edgeSel.classed("on", function (e) { return tr.edges.has(e.i); });
+    rowSel.classed("sel", function (c) { return sel.has(c.id); }).classed("on", function (c) { return tr.cols.has(c.id); });
+    cardSel.classed("off", function (t) { return !tables.has(t.id); });
+    edgeSel.filter(".on").raise();
+    renderPanel(tr);
+  }
+
+  function renderPanel(tr) {
+    var p = document.getElementById("panel"), m = model;
+    var first = m.columnById[selected[0]];
+    var h = "";
+    if (selected.length === 1) {
+      var c = first.col, t = first.table;
+      h += '<p class="eyebrow" style="color:' + DML.layerColor(t.layer) + '">' + DML.esc(m.layerById[t.layer].name) + " · " + DML.esc(DML.tableLabel(t)) + "</p>";
+      h += "<h3><code>" + DML.esc(c.name) + "</code> " + DML.keyTag(c) + "</h3>";
+      h += "<p>" + DML.esc(c.expression || c.type) + (c.description ? " · " + DML.esc(c.description) : "") + "</p>";
+    } else {
+      h += "<h3>" + selected.length + " columns</h3><p>" + DML.esc(DML.tableLabel(first.table)) + (new Set(selected.map(function (id) { return m.columnById[id].table.id; })).size > 1 ? " and others" : "") + "</p>";
+    }
+    // group traced columns by lane for a readable chain
+    var groups = {};
+    tr.cols.forEach(function (id) {
+      if (selected.indexOf(id) >= 0) return;
+      var x = m.columnById[id];
+      var lane = laneOf(x.table);
+      (groups[lane] = groups[lane] || []).push(x);
+    });
+    h += "<h4>Touches " + (tr.cols.size - selected.length) + " other columns in " + Object.keys(groups).length + " layers</h4>";
+    Object.keys(groups).sort().forEach(function (lane) {
+      h += '<p class="eyebrow" style="margin-top:12px;color:' + DML.layerColor(groups[lane][0].table.layer) + '">' + LANES[lane].title + "</p><ul class=\"chain\">";
+      groups[lane].slice(0, 30).forEach(function (x) {
+        var tx = (m.colUp[x.id] || []).filter(function (e) { return tr.edges.has(e.i); }).map(function (e) { return e.transform; });
+        tx = Array.from(new Set(tx)).slice(0, 2).join("; ");
+        h += '<li style="border-left-color:' + DML.layerColor(x.table.layer) + '"><code>' + DML.esc(DML.tableLabel(x.table)) + "." + DML.esc(x.col.name) + "</code>" + (tx ? '<span class="tx">' + DML.esc(tx) + "</span>" : "") + "</li>";
+      });
+      if (groups[lane].length > 30) h += "<li>… and " + (groups[lane].length - 30) + " more</li>";
+      h += "</ul>";
+    });
+    p.innerHTML = h;
+  }
+
+  function scrollTo(id) {
+    var pos = rowPos[id], st = document.getElementById("stage");
+    if (pos) st.scrollTo({ left: Math.max(0, pos.x - 120), top: Math.max(0, pos.y - 160), behavior: "smooth" });
+  }
+})();
+</script>
+</body>
+</html>

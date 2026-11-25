@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="semantic-engine">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semantic engine · Data Model Lab</title>
+<meta name="description" content="Inside a semantic model and the engine that answers it: tables, relationships, measures and hierarchies, then a query traced through the formula engine, storage engine, VertiPaq memory and Direct Lake, Import or DirectQuery.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  .se-stage svg { display: block; width: 100%; height: auto; }
+  .card-t rect.box { fill: var(--bg-raised); stroke: var(--rule-strong); }
+  .card-t rect.head { fill: color-mix(in srgb, var(--l-semantic) 16%, var(--bg-raised)); }
+  .card-t.fact rect.head { fill: color-mix(in srgb, var(--l-gold) 22%, var(--bg-raised)); }
+  .card-t.meas rect.head { fill: color-mix(in srgb, var(--l-report) 18%, var(--bg-raised)); }
+  .card-t text.tn { font-weight: 700; font-size: 12.5px; }
+  .card-t text.tk { font-size: 10px; fill: var(--ink-3); }
+  .row text { font-size: 11px; }
+  .row text.hid { fill: var(--ink-3); font-style: italic; }
+  .row text.tag { font-family: var(--font-mono); font-size: 9px; fill: var(--ink-3); }
+  .row rect.hl { fill: transparent; }
+  .row.on rect.hl { fill: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .row.scan rect.hl { fill: color-mix(in srgb, var(--l-semantic) 30%, transparent); }
+  .row.dep rect.hl { fill: color-mix(in srgb, var(--l-report) 22%, transparent); }
+  .row.meas { cursor: pointer; }
+  .hier text { font-size: 10.5px; fill: var(--l-semantic); }
+  .rel path.ln { fill: none; stroke: var(--ink-3); stroke-width: 1.3; }
+  .rel.inactive path.ln { stroke-dasharray: 5 4; opacity: .7; }
+  .rel.m2m path.ln { stroke: var(--warn); }
+  .rel .hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+  .rel text { font: 700 11px var(--font-mono); fill: var(--ink-2); }
+  .rel .arrow { fill: var(--ink-3); }
+  .rel.live path.ln { stroke: var(--l-semantic); stroke-width: 2.4; stroke-dasharray: 6 5; animation: flow .6s linear infinite; opacity: 1; }
+  .rel.live .arrow { fill: var(--l-semantic); }
+  .rel.focus path.ln { stroke: var(--accent); stroke-width: 2.4; }
+  @keyframes flow { to { stroke-dashoffset: -22; } }
+  .dep-link { fill: none; stroke: var(--l-report); stroke-width: 1.4; opacity: .8; }
+  .lane rect.bg { fill: var(--bg-sunken); stroke: var(--rule); }
+  .lane text.ln { font-weight: 700; font-size: 13px; }
+  .lane text.sub { font-size: 11px; fill: var(--ink-3); }
+  .chip-e rect { fill: var(--bg-raised); stroke: var(--rule-strong); }
+  .chip-e text { font: 10.5px var(--font-mono); }
+  .chip-e.lit rect { stroke: var(--l-report); fill: color-mix(in srgb, var(--l-report) 18%, var(--bg-raised)); }
+  .chip-e.busy rect { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 16%, var(--bg-raised)); }
+  .mem rect.frame { fill: none; stroke: var(--rule-strong); stroke-dasharray: 3 2; }
+  .mem rect.fill { fill: color-mix(in srgb, var(--l-semantic) 55%, transparent); }
+  .mem.res rect.frame { stroke: var(--l-semantic); stroke-dasharray: none; }
+  .mem text { font: 9.5px var(--font-mono); }
+  .mem.hot rect.frame { stroke: var(--accent); stroke-width: 2; }
+  .seq rect.slot { fill: var(--bg-raised); stroke: var(--rule); }
+  .seq.busy rect.slot { stroke: var(--accent); }
+  .seq text { font: 10.5px var(--font-mono); }
+  .seq text.badge { font: 700 9.5px var(--font-sans); letter-spacing: .06em; }
+  .core { fill: var(--rule-strong); }
+  .core.on { fill: var(--l-semantic); }
+  .tok { pointer-events: none; }
+  .wf text { font-size: 10.5px; }
+  .wf .axis text { fill: var(--ink-3); font-size: 10px; }
+  .wf .axis line, .wf .axis path { stroke: var(--rule-strong); }
+  .databox rect { fill: var(--bg-raised); stroke: var(--rule-strong); }
+  .databox.dash rect { stroke-dasharray: 5 4; }
+  .databox text { font-size: 11px; }
+  .file { fill: color-mix(in srgb, var(--l-bronze) 25%, var(--bg-raised)); stroke: var(--l-bronze); }
+  .panel pre { font-size: 11px; white-space: pre-wrap; margin: 6px 0; padding: 8px 10px; }
+  .timings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 8px 0; }
+  .timings div { background: var(--bg-sunken); border-radius: 8px; padding: 6px 8px; }
+  .timings b { display: block; font: 600 17px var(--font-mono); }
+  .timings span { font-size: 11px; color: var(--ink-3); }
+  .log { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+  .log li { padding: 6px 0 6px 12px; border-left: 3px solid var(--c, var(--rule)); margin-bottom: 4px; background: var(--bg-sunken); border-radius: 0 6px 6px 0; }
+  .log li b { display: block; font-size: 12.5px; }
+  .log li span { color: var(--ink-2); font-size: 12.5px; }
+  .modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; }
+  @media (max-width: 760px) { .modes { grid-template-columns: 1fr; } }
+  .modes div { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; background: var(--bg-raised); font-size: 14.5px; }
+  .modes b { display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 08</p>
+    <h1>Semantic engine</h1>
+    <p class="lede">On the left, the inside of a semantic model: tables, relationships with their cardinality and filter direction, hierarchies, and measures that lean on one another. On the right, the engine that answers it. Pick a visual and a storage mode, run the query and watch the formula engine plan, the storage engine scan, columns page into memory and the timings add up.</p>
+  </header>
+  <div class="viz-controls">
+    <label>Visual <select id="visual"></select></label>
+    <label>Storage mode <select id="mode"><option value="dl">Direct Lake</option><option value="import">Import</option><option value="dq">DirectQuery</option></select></label>
+    <label><input type="checkbox" id="cache" checked> Storage engine cache</label>
+    <button class="btn btn--primary" type="button" id="run">Run query</button>
+    <button class="btn" type="button" id="reframe">Reframe after a load</button>
+    <label>Pace <select id="pace"><option value="1.6">Slow</option><option value="1" selected>Normal</option><option value="0.45">Fast</option></select></label>
+  </div>
+  <div class="viz-shell">
+    <div class="viz-stage se-stage" id="stage"></div>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+  <section class="viz-about prose">
+    <h2>Two engines, one query</h2>
+    <p>Every DAX query is answered by two engines working as a pair. The <strong>formula engine</strong> is single-threaded and clever: it understands filter context, time intelligence and iterators, and it does arithmetic on small intermediate results. The <strong>storage engine</strong> is multi-threaded and simple: it scans compressed columns, applies filters and joins along relationships, and returns grouped aggregates called datacaches. Fast models push as much work as possible into the storage engine, in as few scans as possible. Measures that force the formula engine to iterate row by row, like the semi-additive <code>On Hand Units</code> here, are where time goes.</p>
+    <h2>Where the columns come from</h2>
+    <div class="modes">
+      <div><b>Direct Lake</b>Columns are read straight from Delta Parquet files in OneLake the first time a query touches them (transcoding), then stay in memory. A load followed by a reframe points the model at the new files and the next query pays the paging cost again. No copy, no scheduled import.</div>
+      <div><b>Import</b>Columns were copied into memory at the last refresh. Queries never leave VertiPaq, so they are the fastest and the most predictable, at the cost of a scheduled refresh and a second copy of the data.</div>
+      <div><b>DirectQuery</b>There is no VertiPaq data. Each storage engine request becomes SQL sent to the warehouse, so every scan costs a round trip. Direct Lake on the SQL endpoint falls back to this when it cannot read the files directly, for example when SQL-level security applies.</div>
+    </div>
+    <h2>What the numbers are</h2>
+    <p>The timings are illustrative, not measured: they come from a simple cost model (scan size, joins, paging and round trips) so the shape is right even if the milliseconds are not yours. To see real ones, run the same visual's query in DAX Studio with Server Timings on, or use Performance Analyzer in Power BI Desktop. The structure is real: the measures, relationships and hierarchies all come from the shared <a href="../model/">sample model</a>, and the query plan is derived from them.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  "use strict";
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var m, svg, gModel, gEngine, gWf, gTok;
+  var VW = 1220, VH = 870, MX = 10, EX = 655, EW = 555, WFY = 650;
+  var semTables = [], measures = [], measureByName = {}, tableByName = {}, visuals = [];
+  var resident = new Set(), seCache = new Set(), running = false, pace = 1;
+  var cardPos = {}, rowY = {}, relSel;
+
+  // ------------------------------------------------------------ parse measures
+  var REF = /('[^']+'|[A-Za-z_][A-Za-z0-9_]*)?\s*\[([^\]]+)\]/g;
+  function parse(meas) {
+    var e = meas.col.expression, mm, deps = [], cols = [];
+    REF.lastIndex = 0;
+    while ((mm = REF.exec(e))) {
+      var tn = mm[1] ? mm[1].replace(/'/g, "") : null;
+      if (tn && tableByName[tn]) cols.push({ table: tn, col: mm[2] });
+      else if (!tn && measureByName[mm[2]]) deps.push(mm[2]);
+    }
+    meas.deps = Array.from(new Set(deps));
+    meas.cols = cols;
+    meas.ti = /SAMEPERIODLASTYEAR|DATEADD|PARALLELPERIOD/.test(e);
+    meas.userel = /USERELATIONSHIP/.test(e);
+    meas.lnb = /LASTNONBLANK|LASTDATE/.test(e);
+    meas.base = !meas.deps.length && /SUM\s*\(/.test(e);
+    meas.agg = meas.base ? cols.filter(function (c) { return !(c.table === "Date"); })[0] : null;
+  }
+
+  function init(model) {
+    m = model;
+    m.tables.forEach(function (t) {
+      if (t.layer !== "semantic") return;
+      if (t.kind === "measure-table") { t.columns.forEach(function (c) { var x = { name: c.name, col: c, id: c.id }; measures.push(x); measureByName[c.name] = x; }); tableByName.Measures = t; return; }
+      semTables.push(t); tableByName[t.name] = t;
+    });
+    measures.forEach(parse);
+    m.tables.filter(function (t) { return t.layer === "report"; }).forEach(function (t) {
+      t.columns.forEach(function (c) { visuals.push({ report: t, visual: c }); });
+    });
+    var sel = document.getElementById("visual");
+    visuals.forEach(function (v, i) { var o = document.createElement("option"); o.value = i; o.textContent = v.report.name + " › " + v.visual.name; sel.appendChild(o); });
+    sel.value = Math.max(0, visuals.findIndex(function (v) { return v.visual.name === "Sales by category"; }));
+    sel.addEventListener("change", function () { if (!running) prepare(); });
+    document.getElementById("mode").addEventListener("change", function () { if (!running) { seCache.clear(); prepare(); } });
+    document.getElementById("run").addEventListener("click", run);
+    document.getElementById("reframe").addEventListener("click", function () {
+      if (running) return;
+      var md = document.getElementById("mode").value;
+      seCache.clear();
+      if (md === "dl") resident.clear();
+      prepare();
+      logOnly(md === "dl" ? "Reframed: the model now points at the newest Delta files. Cache cleared and columns evicted, so the next query pages them back in." :
+        md === "import" ? "Refreshed: new data was imported. The cache is cleared; columns are already in memory." :
+        "Nothing to reframe in DirectQuery: every query already reads the warehouse.");
+    });
+    document.getElementById("pace").addEventListener("change", function () { pace = +this.value; });
+    build();
+    prepare();
+    document.addEventListener("themechange", function () { build(); prepare(); });
+  }
+
+  // ------------------------------------------------------------ query plan
+  function analyse(v) {
+    var up = m.colUp[v.visual.id] || [], ms = [], fields = [];
+    up.forEach(function (e) {
+      var x = m.columnById[e.from];
+      if (x.table.kind === "measure-table") ms.push(measureByName[x.col.name]);
+      else if (x.table.kind === "semantic-table") fields.push({ table: x.table.name, col: x.col.name, id: x.col.id });
+    });
+    return { measures: ms, fields: fields };
+  }
+  function relFor(fact, dim, ship) {
+    var rs = m.relationships.filter(function (r) { return r.fact === fact && r.dim === dim; });
+    if (ship) { var s = rs.filter(function (r) { return /Ship/.test(r.role || ""); })[0]; if (s) return s; }
+    return rs.filter(function (r) { return r.active; })[0] || rs[0] || null;
+  }
+  function q(t) { return "'" + t + "'"; }
+  function colRef(t, c) { return q(t) + "[" + c + "]"; }
+  function goldName(table, col) {
+    var t = tableByName[table], id = t.id + "." + col;
+    var up = (m.colUp[id] || []).map(function (e) { return m.columnById[e.from]; }).filter(function (x) { return x.table.layer === "gold"; })[0];
+    return { table: (m.tableById[t.source_table] || {}).name || table, col: up ? up.col.name : col };
+  }
+  var ROWS = { Sales: 8, Inventory: 14, Budget: 1, Date: 0.6 };
+  var GROUPS = { Category: 6, Month: 24, Customer: 120, Segment: 4, Warehouse: 4, "Month Name": 12, Region: 5 };
+
+  function plan(v, mode, useCache) {
+    var a = analyse(v), steps = [], res = new Set(resident), cache = new Set(seCache);
+    if (mode === "import") semTables.forEach(function (t) { t.columns.forEach(function (c) { res.add(c.id); }); });
+    var dax;
+    if (a.fields.length) {
+      dax = "EVALUATE\nSUMMARIZECOLUMNS (\n" + a.fields.map(function (f) { return "    " + colRef(f.table, f.col); }).join(",\n") + ",\n" +
+        a.measures.map(function (x) { return '    "' + x.name + '", [' + x.name + "]"; }).join(",\n") + "\n)";
+    } else {
+      dax = "EVALUATE\nROW (\n" + a.measures.map(function (x) { return '    "' + x.name + '", [' + x.name + "]"; }).join(",\n") + "\n)";
+    }
+    // walk the measure tree, collecting base aggregations under their context modifiers
+    var order = [], seen = {}, leaves = [];
+    function walk(x, mods) {
+      var mm = Object.assign({}, mods);
+      if (x.ti) mm.py = true;
+      if (x.userel) mm.ship = true;
+      if (x.lnb) mm.lnb = true;
+      if (x.base && x.agg) leaves.push({ measure: x, agg: x.agg, mods: mm });
+      x.deps.forEach(function (d) { walk(measureByName[d], mm); });
+      var key = x.name + JSON.stringify(mm);
+      if (!seen[key]) { seen[key] = 1; order.push({ measure: x, mods: mm }); }
+    }
+    a.measures.forEach(function (x) { walk(x, {}); });
+    // group leaves into storage engine queries: one per fact table and context
+    var groups = {};
+    leaves.forEach(function (l) {
+      var k = l.agg.table + "|" + (l.mods.py ? "py" : "") + (l.mods.ship ? "ship" : "") + (l.mods.lnb ? "lnb" : "");
+      if (!groups[k]) groups[k] = { fact: l.agg.table, mods: l.mods, aggs: [] };
+      if (!groups[k].aggs.some(function (g) { return g.col === l.agg.col; })) groups[k].aggs.push(l.agg);
+    });
+    var seqs = [];
+    var needsDates = Object.keys(groups).some(function (k) { return groups[k].mods.py; });
+    if (needsDates) {
+      seqs.push({ kind: "dates", fact: "Date", label: "Date list for SAMEPERIODLASTYEAR", cols: ["semantic.Date.Date"], joins: [],
+        xm: "SELECT 'Date'[Date]\nFROM 'Date'\nWHERE 'Date'[Date] IN ( <dates in the current filter> )",
+        sql: "SELECT d.[date]\nFROM dbo.dim_date AS d\nWHERE d.[date] BETWEEN @from AND @to", rows: 365 });
+    }
+    Object.keys(groups).forEach(function (k) {
+      var g = groups[k], fact = g.fact, joins = [], touched = [], groupBy = [], notes = [];
+      g.aggs.forEach(function (ag) { touched.push(tableByName[fact].id + "." + ag.col); });
+      var byFields = a.fields.slice();
+      if (g.mods.lnb && !byFields.some(function (f) { return f.table === "Date" && f.col === "Date"; })) byFields.push({ table: "Date", col: "Date", id: "semantic.Date.Date", extra: true });
+      byFields.forEach(function (f) {
+        var r = relFor(fact, f.table, g.mods.ship && f.table === "Date");
+        if (!r) { notes.push(f.table + " is not related to " + fact + ", so it does not filter it"); return; }
+        groupBy.push(f);
+        touched.push(tableByName[f.table].id + "." + f.col);
+        if (!joins.some(function (j) { return j.r === r; })) {
+          joins.push({ r: r, dim: f.table });
+          touched.push(tableByName[fact].id + "." + r.from);
+          touched.push(tableByName[f.table].id + "." + r.to);
+          if (r.cardinality === "*:*") notes.push("many-to-many on " + r.to + ": the engine matches on distinct " + r.to + " values");
+          if (!r.active) notes.push("USERELATIONSHIP switches on the inactive " + (r.role || r.from) + " relationship");
+        }
+      });
+      if (g.mods.py) touched.push("semantic.Date.Date");
+      var sel = groupBy.map(function (f) { return colRef(f.table, f.col); }).concat(g.aggs.map(function (ag) { return "SUM ( " + colRef(fact, ag.col) + " )"; }));
+      var xm = "SELECT " + sel.join(",\n       ") + "\nFROM " + q(fact) +
+        joins.map(function (j) { return "\n  LEFT OUTER JOIN " + q(j.dim) + "\n    ON " + colRef(fact, j.r.from) + " = " + colRef(j.dim, j.r.to); }).join("") +
+        (g.mods.py ? "\nWHERE 'Date'[Date] IN ( <same dates, one year earlier> )" : "");
+      var gf = goldName(fact, g.aggs[0].col);
+      // build readable SQL for DirectQuery
+      var fa = "f", sqlCols = [], sqlJoins = [], gb = [];
+      joins.forEach(function (j, i) {
+        var gd = goldName(j.dim, j.r.to), gk = goldName(fact, j.r.from);
+        sqlJoins.push("JOIN dbo." + gd.table + " AS d" + i + " ON " + fa + "." + gk.col + " = d" + i + "." + gd.col);
+        groupBy.filter(function (f) { return f.table === j.dim; }).forEach(function (f) { var gn = goldName(f.table, f.col); sqlCols.push("d" + i + "." + gn.col); gb.push("d" + i + "." + gn.col); });
+      });
+      var sql = "SELECT " + sqlCols.concat(g.aggs.map(function (ag) { var gn = goldName(fact, ag.col); return "SUM(" + fa + "." + gn.col + ")"; })).join(",\n       ") +
+        "\nFROM dbo." + gf.table + " AS " + fa + (sqlJoins.length ? "\n" + sqlJoins.join("\n") : "") + (g.mods.py ? "\nWHERE <dates one year earlier>" : "") + (gb.length ? "\nGROUP BY " + gb.join(", ") : "");
+      var rows = groupBy.reduce(function (acc, f) { return acc * (GROUPS[f.col] || (f.col === "Date" ? 730 : 10)); }, 1);
+      seqs.push({ kind: "agg", fact: fact, mods: g.mods, label: fact + (joins.length ? " ⋈ " + joins.map(function (j) { return j.dim; }).join(", ") : "") + " · SUM×" + g.aggs.length + (g.mods.py ? " · prior year" : "") + (g.mods.ship ? " · by ship date" : "") + (g.mods.lnb ? " · by day" : ""),
+        cols: Array.from(new Set(touched)), joins: joins, xm: xm, sql: sql, notes: notes, rows: Math.min(rows, 9999), aggs: g.aggs });
+    });
+    // timings (illustrative cost model)
+    var t = 0;
+    function push(s) { s.start = t; t += s.ms; steps.push(s); }
+    push({ type: "dax", ms: 1.2, title: "Visual sends DAX", text: a.measures.length + " measure" + (a.measures.length > 1 ? "s" : "") + (a.fields.length ? " by " + a.fields.map(function (f) { return f.table + "[" + f.col + "]"; }).join(", ") : " with no grouping (a card)") + ". One query, however many measures." });
+    push({ type: "plan", ms: 0.8 + order.length * 0.15, title: "Formula engine builds a plan", text: "It expands " + a.measures.length + " measure" + (a.measures.length > 1 ? "s" : "") + " into " + order.length + " evaluation step" + (order.length > 1 ? "s" : "") + " and asks the storage engine for " + seqs.length + " datacache" + (seqs.length > 1 ? "s" : "") + "." });
+    seqs.forEach(function (s, i) {
+      s.i = i;
+      var key = mode + "|" + s.xm;
+      var hit = useCache && mode !== "dq" && cache.has(key);
+      var paging = [];
+      if (mode === "dl" && !hit) s.cols.forEach(function (c) { if (!res.has(c)) { paging.push({ col: c, ms: /Sales\.|Inventory\./.test(c) ? 26 : /Budget\./.test(c) ? 5 : 4 }); res.add(c); } });
+      var joinsN = s.joins.length;
+      var scan = hit ? 0.2 : mode === "dq" ? 40 + 18 * joinsN + (ROWS[s.fact] || 1) * 4 : 1.4 + (ROWS[s.fact] || 1) + joinsN * 1.6;
+      var pg = d3.sum(paging, function (p) { return p.ms; });
+      push({ type: "se", q: s, ms: scan + pg, scan: scan, paging: paging, hit: hit, dq: mode === "dq",
+        title: "SE " + (i + 1) + ": " + (hit ? "cache hit" : mode === "dq" ? "SQL to the warehouse" : "scan") + " · " + s.label,
+        text: hit ? "Same request as before, answered from the storage engine cache in a fraction of a millisecond." :
+          (mode === "dq" ? "No data in memory, so the request becomes SQL and waits on the warehouse round trip." :
+          (paging.length ? paging.length + " column" + (paging.length > 1 ? "s" : "") + " paged in from Parquet first. " : "Every column it needs is already in memory. ") + "The scan runs across all cores and returns about " + s.rows.toLocaleString() + " row" + (s.rows > 1 ? "s" : "") + ".") +
+          (s.notes && s.notes.length ? " Note: " + s.notes.join("; ") + "." : "") });
+      if (useCache && mode !== "dq") cache.add(key);
+    });
+    order.forEach(function (o) {
+      var x = o.measure;
+      if (x.base && !x.lnb) return;
+      var ms = x.lnb ? 16 : x.ti ? 1.5 : 0.3;
+      push({ type: "fe", measure: x, ms: ms, title: "FE: [" + x.name + "]" + (o.mods.py ? " (prior year)" : ""),
+        text: x.lnb ? "Semi-additive: the formula engine walks the dates in each group to find the last one with stock. This iteration is the expensive part of the query." :
+          x.ti ? "Time intelligence: the formula engine shifted the date filter and lines up the prior-year datacache with the current one." :
+          "Arithmetic on datacaches already in hand: " + x.col.expression });
+    });
+    var outRows = a.fields.reduce(function (acc, f) { return acc * (GROUPS[f.col] || 10); }, 1);
+    push({ type: "result", ms: 0.6, title: "Result back to the visual", text: Math.min(outRows, 9999).toLocaleString() + " row" + (outRows > 1 ? "s" : "") + " × " + (a.fields.length + a.measures.length) + " column" + (a.fields.length + a.measures.length > 1 ? "s" : "") + " goes back to the report." });
+    return { a: a, dax: dax, steps: steps, seqs: seqs, order: order, total: t, res: res, cache: cache };
+  }
+
+  // ------------------------------------------------------------ static drawing
+  var COLX = [10, 225, 440], CW = 170, RH = 15, HH = 26;
+  var LAYOUT = { Date: [0, 34], Customer: [1, 34], Salesperson: [2, 34], Budget: [0, 222], Sales: [1, 214], Measures: [2, 190], Product: [0, 360], Inventory: [1, 472], Warehouse: [2, 470] };
+  function hierFor(t) { return (m.hierarchies || []).filter(function (h) { return h.table === t; }); }
+  function build() {
+    var stage = document.getElementById("stage"); stage.innerHTML = "";
+    svg = d3.select(stage).append("svg").attr("viewBox", [-45, 0, VW + 45, VH]).attr("role", "img")
+      .attr("aria-label", "Semantic model diagram on the left and analytic engine lanes on the right, with a timing waterfall below");
+    var defs = svg.append("defs");
+    var pat = defs.append("pattern").attr("id", "hatch").attr("width", 6).attr("height", 6).attr("patternUnits", "userSpaceOnUse").attr("patternTransform", "rotate(45)");
+    pat.append("rect").attr("width", 6).attr("height", 6).attr("fill", DML.layerColor("bronze")).attr("opacity", 0.35);
+    pat.append("line").attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 6).attr("stroke", DML.layerColor("bronze")).attr("stroke-width", 3);
+    svg.append("text").attr("x", MX).attr("y", 18).attr("font-weight", 700).attr("font-size", 14).text("Semantic model · " + (m.tables.filter(function (t) { return t.layer === "semantic"; })[0] || {}).schema);
+    svg.append("text").attr("x", EX).attr("y", 18).attr("font-weight", 700).attr("font-size", 14).text("Analytic engine");
+    gModel = svg.append("g");
+    gEngine = svg.append("g");
+    gWf = svg.append("g").attr("class", "wf").attr("transform", "translate(0," + WFY + ")");
+    gTok = svg.append("g");
+    drawModel();
+    drawEngine();
+  }
+
+  function drawModel() {
+    var gRel = gModel.append("g"), gDep = gModel.append("g").attr("id", "deps"), gCards = gModel.append("g");
+    Object.keys(LAYOUT).forEach(function (name) {
+      var t = tableByName[name]; if (!t) return;
+      var pos = LAYOUT[name], x = COLX[pos[0]], y = pos[1];
+      var isM = name === "Measures", isFact = /fact/.test(t.source_table || "");
+      var rows = isM ? measures.map(function (x) { return { name: x.name, meas: x, id: x.id }; }) : t.columns.map(function (c) { return { name: c.name, c: c, id: c.id }; });
+      var hs = isM ? [] : hierFor(name);
+      var h = HH + rows.length * RH + hs.length * RH + 6;
+      cardPos[name] = { x: x, y: y, w: CW, h: h };
+      var g = gCards.append("g").attr("class", "card-t" + (isM ? " meas" : isFact ? " fact" : "")).attr("transform", "translate(" + x + "," + y + ")");
+      g.append("rect").attr("class", "box").attr("width", CW).attr("height", h).attr("rx", 8);
+      g.append("rect").attr("class", "head").attr("width", CW).attr("height", HH).attr("rx", 8);
+      g.append("rect").attr("class", "head").attr("y", HH - 8).attr("width", CW).attr("height", 8);
+      g.append("text").attr("class", "tn").attr("x", 9).attr("y", 17).text(name);
+      g.append("text").attr("class", "tk").attr("x", CW - 8).attr("y", 17).attr("text-anchor", "end").text(isM ? "measures" : isFact ? "fact · " + t.storage : "dimension · " + t.storage);
+      rows.forEach(function (r, i) {
+        var ry = HH + 3 + i * RH;
+        rowY[r.id] = y + ry + RH / 2;
+        var rg = g.append("g").attr("class", "row" + (isM ? " meas" : "")).attr("data-id", r.id).attr("transform", "translate(0," + ry + ")");
+        rg.append("rect").attr("class", "hl").attr("x", 2).attr("width", CW - 4).attr("height", RH).attr("rx", 3);
+        var label = isM ? "ƒ " + r.name : r.name;
+        rg.append("text").attr("class", r.c && r.c.hidden ? "hid" : "").attr("x", 9).attr("y", 11).text(label.length > 24 ? label.slice(0, 23) + "…" : label);
+        var tag = "";
+        if (r.c && r.c.key) tag = r.c.key;
+        hs.forEach(function (hh) { var li = hh.levels.indexOf(r.name); if (li >= 0) tag = (tag ? tag + " " : "") + "L" + (li + 1); });
+        if (r.c && r.c.hidden) tag = (tag ? tag + " " : "") + "hidden";
+        if (isM) tag = r.meas.col.folder || "";
+        if (tag) rg.append("text").attr("class", "tag").attr("x", CW - 8).attr("y", 11).attr("text-anchor", "end").text(tag);
+        if (isM) {
+          rg.on("mouseenter", function (ev) { showDeps(r.meas); DML.tip.show("<b>" + DML.esc(r.name) + "</b><br><code>" + DML.esc(r.meas.col.expression) + "</code>", ev); })
+            .on("mousemove", function (ev) { DML.tip.move(ev); })
+            .on("mouseleave", function () { if (!running) clearDeps(); DML.tip.hide(); })
+            .on("click", function () { measurePanel(r.meas); });
+        } else if (r.c) {
+          rg.on("mouseenter", function (ev) { DML.tip.show("<b>" + DML.esc(name + "[" + r.name + "]") + "</b><br>" + DML.esc(r.c.type) + (r.c.hidden ? " · hidden from report authors" : ""), ev); })
+            .on("mousemove", function (ev) { DML.tip.move(ev); }).on("mouseleave", function () { DML.tip.hide(); });
+        }
+      });
+      hs.forEach(function (hh, i) {
+        var hy = HH + 3 + rows.length * RH + i * RH;
+        var hg = g.append("g").attr("class", "hier").attr("transform", "translate(0," + hy + ")");
+        hg.append("text").attr("x", 9).attr("y", 11).text("⋔ " + hh.name + ": " + hh.levels.join(" › ")).each(function () {
+          var s = this.textContent; if (s.length > 34) this.textContent = s.slice(0, 33) + "…";
+        });
+        hg.on("mouseenter", function (ev) { DML.tip.show("<b>Hierarchy · " + DML.esc(hh.name) + "</b><br>" + hh.levels.map(DML.esc).join(" › ") + "<br><span style=\"opacity:.7\">Drill path for report authors; each level is a column above.</span>", ev); })
+          .on("mousemove", function (ev) { DML.tip.move(ev); }).on("mouseleave", function () { DML.tip.hide(); });
+      });
+    });
+    // relationships
+    var rels = m.relationships.map(function (r, i) { return Object.assign({ i: i }, r); });
+    relSel = gRel.selectAll("g.rel").data(rels).join("g")
+      .attr("class", function (r) { return "rel" + (r.active ? "" : " inactive") + (r.cardinality === "*:*" ? " m2m" : ""); });
+    relSel.each(function (r) {
+      var g = d3.select(this), f = cardPos[r.fact], d = cardPos[r.dim];
+      var fy = rowY[tableByName[r.fact].id + "." + r.from], dy = rowY[tableByName[r.dim].id + "." + r.to];
+      var path, x1, x2, endF, endD;
+      if (Math.abs(f.x - d.x) < 5) {
+        var xx = f.x - 2, bend = 18 + (r.i % 3) * 7;
+        x1 = xx; x2 = xx;
+        path = "M" + x1 + "," + fy + " C" + (x1 - bend) + "," + fy + " " + (x2 - bend) + "," + dy + " " + x2 + "," + dy;
+        endF = [x1 - 8, fy - 3]; endD = [x2 - 8, dy - 3];
+      } else {
+        var right = d.x > f.x;
+        x1 = right ? f.x + f.w : f.x; x2 = right ? d.x : d.x + d.w;
+        var mx = (x1 + x2) / 2;
+        path = "M" + x1 + "," + fy + " C" + mx + "," + fy + " " + mx + "," + dy + " " + x2 + "," + dy;
+        endF = [x1 + (right ? 7 : -7), fy - 4]; endD = [x2 + (right ? -7 : 7), dy - 4];
+      }
+      g.append("path").attr("class", "ln").attr("d", path);
+      g.append("path").attr("class", "hit").attr("d", path);
+      var card = r.cardinality.split(":");
+      g.append("text").attr("x", endF[0]).attr("y", endF[1]).attr("text-anchor", "middle").text(card[0]);
+      g.append("text").attr("x", endD[0]).attr("y", endD[1]).attr("text-anchor", "middle").text(card[1]);
+      // filter direction: dimension filters fact
+      var p = g.select("path.ln").node(), L = p.getTotalLength(), a = p.getPointAtLength(L * 0.5), b = p.getPointAtLength(L * 0.46);
+      var ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      g.append("path").attr("class", "arrow").attr("d", "M-4,-3.5 L4,0 L-4,3.5 Z").attr("transform", "translate(" + a.x + "," + a.y + ") rotate(" + ang + ")");
+      g.select("path.hit").on("mouseenter", function (ev) {
+        g.classed("focus", true);
+        DML.tip.show("<b>" + DML.esc(r.fact + "[" + r.from + "] → " + r.dim + "[" + r.to + "]") + "</b><br>" + r.cardinality + " · " + (r.active ? "active" : "inactive") + (r.role ? " · " + DML.esc(r.role) : "") + (r.crossFilter ? "<br>" + DML.esc(r.crossFilter) : "<br>single direction: " + DML.esc(r.dim) + " filters " + DML.esc(r.fact)) + (r.note ? "<br><span style=\"opacity:.75\">" + DML.esc(r.note) + "</span>" : ""), ev);
+      }).on("mousemove", function (ev) { DML.tip.move(ev); }).on("mouseleave", function () { g.classed("focus", false); DML.tip.hide(); });
+    });
+    // legend
+    var lg = gModel.append("g").attr("transform", "translate(" + MX + ",606)").attr("font-size", 10.5);
+    [["solid", "active"], ["dash", "inactive (USERELATIONSHIP)"], ["m2m", "many-to-many"]].forEach(function (l, i) {
+      var x = i * 170;
+      lg.append("line").attr("x1", x).attr("x2", x + 26).attr("y1", 0).attr("y2", 0).attr("stroke", l[0] === "m2m" ? DML.css("--warn") : DML.css("--ink-3")).attr("stroke-width", 1.5).attr("stroke-dasharray", l[0] === "dash" ? "5 4" : null);
+      lg.append("text").attr("x", x + 32).attr("y", 4).attr("fill", DML.css("--ink-2")).text(l[1]);
+    });
+    lg.append("text").attr("y", 20).attr("fill", DML.css("--ink-3")).text("▸ arrows show filter direction · L1–L4 mark hierarchy levels · hover a measure for its dependencies");
+  }
+
+  function showDeps(x) {
+    clearDeps();
+    var ms = new Set(), cs = new Set();
+    (function walk(y) { ms.add(y.name); y.cols.forEach(function (c) { cs.add(tableByName[c.table].id + "." + c.col); }); y.deps.forEach(function (d) { walk(measureByName[d]); }); })(x);
+    gModel.selectAll(".row").classed("dep", function () {
+      var id = this.getAttribute("data-id"), mm = measures.filter(function (z) { return z.id === id; })[0];
+      return (mm && ms.has(mm.name)) || cs.has(id);
+    });
+    var gd = gModel.select("#deps"), mc = cardPos.Measures;
+    ms.forEach(function (n) {
+      var y = measureByName[n];
+      var y1 = rowY[y.id];
+      y.deps.forEach(function (d) {
+        var y2 = rowY[measureByName[d].id], xr = mc.x + mc.w;
+        gd.append("path").attr("class", "dep-link").attr("d", "M" + xr + "," + y1 + " C" + (xr + 26) + "," + y1 + " " + (xr + 26) + "," + y2 + " " + xr + "," + y2);
+      });
+      y.cols.forEach(function (c) {
+        var id = tableByName[c.table].id + "." + c.col, cp = cardPos[c.table], y2 = rowY[id];
+        if (y2 == null) return;
+        var x2 = cp.x + cp.w, x1 = mc.x;
+        if (cp.x > mc.x) { x2 = cp.x; x1 = mc.x + mc.w; }
+        gd.append("path").attr("class", "dep-link").attr("d", "M" + x1 + "," + y1 + " C" + (x1 - 30) + "," + y1 + " " + (x2 + 30) + "," + y2 + " " + x2 + "," + y2);
+      });
+    });
+  }
+  function clearDeps() { gModel.selectAll(".row").classed("dep", false); gModel.select("#deps").selectAll("*").remove(); }
+
+  var LANES = [
+    { id: "vis", name: "Report visual", sub: "turns clicks into one DAX query", y: 30, h: 72, color: "report" },
+    { id: "fe", name: "Formula engine", sub: "single-threaded · filter context, time intelligence, arithmetic", y: 112, h: 92, color: "semantic" },
+    { id: "se", name: "Storage engine", sub: "multi-threaded scans of compressed columns (xmSQL)", y: 214, h: 150, color: "semantic" },
+    { id: "mem", name: "VertiPaq memory", sub: "column segments: dictionary + encoded data", y: 374, h: 140, color: "gold" },
+    { id: "data", name: "Data", sub: "", y: 524, h: 92, color: "bronze" }
+  ];
+  function lane(id) { return LANES.filter(function (l) { return l.id === id; })[0]; }
+  function drawEngine() {
+    var g = gEngine;
+    LANES.forEach(function (l) {
+      var lg = g.append("g").attr("class", "lane").attr("id", "lane-" + l.id).attr("transform", "translate(" + EX + "," + l.y + ")");
+      lg.append("rect").attr("class", "bg").attr("width", EW).attr("height", l.h).attr("rx", 10);
+      lg.append("rect").attr("width", 5).attr("height", l.h).attr("rx", 2.5).attr("fill", DML.layerColor(l.color));
+      lg.append("text").attr("class", "ln").attr("x", 16).attr("y", 20).text(l.name);
+      lg.append("text").attr("class", "sub").attr("x", 16).attr("y", 35).attr("id", "sub-" + l.id).text(l.sub);
+      lg.append("g").attr("class", "body").attr("transform", "translate(16,44)");
+    });
+    // cores in the SE lane
+    var cg = g.select("#lane-se").append("g").attr("id", "cores").attr("transform", "translate(" + (EW - 96) + ",12)");
+    for (var i = 0; i < 8; i++) cg.append("rect").attr("class", "core").attr("x", (i % 4) * 20).attr("y", Math.floor(i / 4) * 12).attr("width", 16).attr("height", 9).attr("rx", 2);
+    g.select("#lane-se").append("text").attr("class", "sub").attr("x", EW - 96).attr("y", 44).text("cores");
+  }
+
+  // ------------------------------------------------------------ per-query drawing
+  var P_ = null;
+  function prepare() {
+    var v = visuals[+document.getElementById("visual").value];
+    P_ = plan(v, mode(), document.getElementById("cache").checked);
+    clearDeps();
+    gModel.selectAll(".row").classed("on", false).classed("scan", false);
+    relSel.classed("live", false);
+    // highlight what the visual asks for
+    var want = new Set(P_.a.measures.map(function (x) { return x.id; }).concat(P_.a.fields.map(function (f) { return f.id; })));
+    gModel.selectAll(".row").classed("on", function () { return want.has(this.getAttribute("data-id")); });
+    // visual lane
+    var vb = gEngine.select("#lane-vis .body"); vb.selectAll("*").remove();
+    vb.append("text").attr("font-size", 12).attr("font-weight", 600).attr("y", 4).text("“" + v.visual.name + "” on " + v.report.name);
+    vb.append("text").attr("class", "t-mono").attr("font-size", 10.5).attr("y", 20).attr("fill", DML.css("--ink-2")).text(P_.dax.replace(/\s+/g, " ").slice(0, 86) + (P_.dax.length > 86 ? "…" : ""));
+    // FE chips
+    var fb = gEngine.select("#lane-fe .body"); fb.selectAll("*").remove();
+    var x = 0, y = 0;
+    P_.order.forEach(function (o, i) {
+      var label = (o.measure.base ? "Σ " : "ƒ ") + o.measure.name + (o.mods.py ? " ·PY" : "");
+      var w = label.length * 6.4 + 14;
+      if (x + w > EW - 30) { x = 0; y += 24; }
+      var c = fb.append("g").attr("class", "chip-e fe-chip").attr("data-k", o.measure.name + (o.mods.py ? "|py" : "")).attr("transform", "translate(" + x + "," + y + ")");
+      c.append("rect").attr("width", w).attr("height", 19).attr("rx", 5);
+      c.append("text").attr("x", 7).attr("y", 13).text(label);
+      x += w + 6;
+    });
+    // SE slots
+    var sb = gEngine.select("#lane-se .body"); sb.selectAll("*").remove();
+    P_.seqs.forEach(function (s, i) {
+      var row = sb.append("g").attr("class", "seq").attr("id", "seq-" + i).attr("transform", "translate(0," + (i * 25) + ")");
+      row.append("rect").attr("class", "slot").attr("width", EW - 32).attr("height", 21).attr("rx", 5);
+      row.append("text").attr("x", 8).attr("y", 14).text("SE" + (i + 1) + "  " + (s.label.length > 64 ? s.label.slice(0, 63) + "…" : s.label));
+      row.append("text").attr("class", "badge").attr("x", EW - 40).attr("y", 14).attr("text-anchor", "end").text("");
+    });
+    if (P_.seqs.length > 4) gEngine.select("#lane-se rect.bg").attr("height", 50 + P_.seqs.length * 25);
+    // memory chips: every column this query touches
+    var memCols = Array.from(new Set([].concat.apply([], P_.seqs.map(function (s) { return s.cols; }))));
+    var mb = gEngine.select("#lane-mem .body"); mb.selectAll("*").remove();
+    var mx = 0, my = 0;
+    memCols.forEach(function (id) {
+      var c = m.columnById[id], label = c.table.name + "[" + c.col.name + "]", w = label.length * 5.9 + 12;
+      if (mx + w > EW - 30) { mx = 0; my += 22; }
+      var res = isResident(id);
+      var g = mb.append("g").attr("class", "mem" + (res ? " res" : "")).attr("data-id", id).attr("transform", "translate(" + mx + "," + my + ")");
+      g.append("rect").attr("class", "fill").attr("width", res ? w : 0).attr("height", 17).attr("rx", 4);
+      g.append("rect").attr("class", "frame").attr("width", w).attr("height", 17).attr("rx", 4);
+      g.append("text").attr("x", 6).attr("y", 12).text(label);
+      g.attr("data-w", w);
+      mx += w + 5;
+    });
+    var totalCols = d3.sum(semTables, function (t) { return t.columns.length; });
+    gEngine.select("#sub-mem").text("column segments in memory: " + residentCount() + " of " + totalCols + " columns" + (mode() === "dq" ? " (none: DirectQuery)" : ""));
+    // data lane
+    var db = gEngine.select("#lane-data .body"); db.selectAll("*").remove();
+    var md = mode(), facts = Array.from(new Set(P_.seqs.map(function (s) { return s.fact; }).concat([].concat.apply([], P_.seqs.map(function (s) { return s.joins.map(function (j) { return j.dim; }); })))));
+    gEngine.select("#sub-data").text(md === "dl" ? "OneLake · Delta tables · V-Ordered Parquet" : md === "import" ? "imported at the last refresh · not on the query path" : "Warehouse · SQL analytics endpoint");
+    var box = db.append("g").attr("class", "databox" + (md === "import" ? " dash" : ""));
+    box.append("rect").attr("width", EW - 32).attr("height", 38).attr("rx", 6);
+    if (md === "dq") {
+      box.append("text").attr("x", 10).attr("y", 23).text("Each storage engine request becomes T-SQL against dbo." + facts.map(function (f) { return goldName(f, "x").table; }).join(", dbo."));
+    } else {
+      facts.forEach(function (f, i) {
+        var gx = 10 + i * 128, gt = goldName(f, "x").table;
+        for (var k = 0; k < 3; k++) box.append("rect").attr("class", "file").attr("x", gx + k * 7).attr("y", 8 + k * 2).attr("width", 16).attr("height", 20).attr("rx", 2);
+        box.append("text").attr("x", gx + 38).attr("y", 23).text(gt);
+      });
+      if (md === "import") box.append("text").attr("x", EW - 44).attr("y", 23).attr("text-anchor", "end").attr("fill", DML.css("--ink-3")).text("not read at query time");
+    }
+    gWf.selectAll("*").remove();
+    gTok.selectAll("*").remove();
+    renderPanel(false);
+  }
+  function mode() { return document.getElementById("mode").value; }
+  function isResident(id) { return mode() === "import" || (mode() === "dl" && resident.has(id)); }
+  function residentCount() {
+    if (mode() === "import") return d3.sum(semTables, function (t) { return t.columns.length; });
+    if (mode() === "dq") return 0;
+    return resident.size;
+  }
+
+  // ------------------------------------------------------------ panel
+  function fmt(ms) { return ms < 10 ? ms.toFixed(1) : Math.round(ms).toString(); }
+  function renderPanel(done) {
+    var p = P_, v = visuals[+document.getElementById("visual").value];
+    var fe = d3.sum(p.steps.filter(function (s) { return s.type !== "se"; }), function (s) { return s.ms; });
+    var se = d3.sum(p.steps.filter(function (s) { return s.type === "se"; }), function (s) { return s.ms; });
+    var hits = p.steps.filter(function (s) { return s.type === "se" && s.hit; }).length;
+    var h = '<p class="eyebrow">' + DML.esc(v.report.name) + '</p><h3>' + DML.esc(v.visual.name) + "</h3>";
+    h += '<div class="timings"><div><b>' + (done ? fmt(p.total) : "?") + ' ms</b><span>total, illustrative</span></div><div><b>' + p.seqs.length + '</b><span>storage engine queries</span></div>' +
+      '<div><b>' + (done ? fmt(fe) : "?") + ' ms</b><span>formula engine</span></div><div><b>' + (done ? fmt(se) : "?") + ' ms</b><span>storage engine' + (done && hits ? ", " + hits + " cache hit" + (hits > 1 ? "s" : "") : "") + "</span></div></div>";
+    h += '<h4>Steps</h4><ol class="log" id="log">' + (done ? "" : '<li><span>Press Run query to trace it.</span></li>') + "</ol>";
+    h += "<h4>DAX from the visual</h4><pre><code>" + DML.esc(p.dax) + "</code></pre>";
+    h += "<h4>" + (mode() === "dq" ? "SQL sent to the warehouse" : "Storage engine requests (xmSQL, simplified)") + "</h4>";
+    p.seqs.forEach(function (s, i) { h += "<pre><code>-- SE" + (i + 1) + "\n" + DML.esc(mode() === "dq" ? s.sql : s.xm) + "</code></pre>"; });
+    document.getElementById("panel").innerHTML = h;
+  }
+  function logStep(s) {
+    var c = s.type === "se" ? (s.hit ? DML.css("--ok") : s.dq ? DML.css("--warn") : DML.layerColor("semantic")) : s.type === "fe" ? DML.layerColor("report") : DML.css("--ink-3");
+    var li = document.createElement("li"); li.style.setProperty("--c", c);
+    li.innerHTML = "<b>" + DML.esc(s.title) + " · " + fmt(s.ms) + " ms</b><span>" + DML.esc(s.text) + "</span>";
+    var log = document.getElementById("log"); if (log) log.appendChild(li);
+  }
+  function logOnly(text) {
+    var log = document.getElementById("log"); if (!log) return;
+    log.innerHTML = '<li style="--c:' + DML.css("--accent") + '"><span>' + DML.esc(text) + "</span></li>";
+  }
+  function measurePanel(x) {
+    if (running) return;
+    var used = visuals.filter(function (v) { return (m.colUp[v.visual.id] || []).some(function (e) { return e.from === x.id; }); });
+    var h = '<p class="eyebrow">Measure · ' + DML.esc(x.col.folder || "") + "</p><h3>" + DML.esc(x.name) + "</h3><pre><code>" + DML.esc(x.col.expression) + "</code></pre>";
+    h += "<h4>Leans on</h4><ul>" + (x.deps.map(function (d) { return "<li>[" + DML.esc(d) + "]</li>"; }).join("") + x.cols.map(function (c) { return "<li>" + DML.esc(c.table + "[" + c.col + "]") + "</li>"; }).join("") || "<li>nothing</li>") + "</ul>";
+    var kind = x.lnb ? "Semi-additive: forces the formula engine to iterate dates. Expect it to dominate query time." : x.ti ? "Time intelligence: one extra storage engine query for the shifted dates." : x.userel ? "Role-playing: activates an inactive relationship for this calculation only, so it needs its own scan." : x.base ? "Base aggregation: becomes a SUM inside a storage engine scan, fused with others on the same table." : "Derived: pure formula engine arithmetic on datacaches it already has. Cheap.";
+    h += "<h4>How the engine treats it</h4><p>" + kind + "</p>";
+    h += "<h4>Used by</h4><ul>" + (used.map(function (v) { return "<li>" + DML.esc(v.report.name + " › " + v.visual.name) + "</li>"; }).join("") || "<li>no visual yet</li>") + "</ul>";
+    document.getElementById("panel").innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ animation
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, reduce ? 0 : ms * pace); }); }
+  function laneMid(id) { var l = lane(id); return l.y + l.h / 2; }
+  function token(x1, y1, x2, y2, color, dur, r) {
+    if (reduce) return Promise.resolve();
+    var c = gTok.append("circle").attr("class", "tok").attr("r", r || 6).attr("cx", x1).attr("cy", y1).attr("fill", color).attr("opacity", 0.95);
+    return c.transition().duration(dur * pace).ease(d3.easeCubicInOut).attr("cx", x2).attr("cy", y2).end().catch(function () {}).then(function () { c.remove(); });
+  }
+  function msToAnim(ms) { return Math.max(260, Math.min(1500, ms * 26)); }
+
+  var wfX;
+  function drawWfAxis(total) {
+    gWf.selectAll("*").remove();
+    wfX = d3.scaleLinear().domain([0, Math.max(5, total)]).range([150, VW - 60]);
+    gWf.append("text").attr("x", MX).attr("y", 0).attr("font-weight", 700).attr("font-size", 13).text("Server timings (illustrative)");
+    gWf.append("g").attr("class", "axis").attr("transform", "translate(0,16)").call(d3.axisTop(wfX).ticks(8).tickFormat(function (d) { return d + " ms"; }));
+  }
+  var wfRow = 0;
+  function wfBar(s) {
+    var y = 26 + wfRow * 15; wfRow++;
+    var label = s.type === "se" ? "SE" + (s.q.i + 1) + (s.hit ? " cache" : s.dq ? " SQL" : " scan") : s.type === "fe" ? "FE " + s.measure.name : s.type === "dax" ? "FE parse" : s.type === "plan" ? "FE plan" : "FE result";
+    gWf.append("text").attr("x", MX).attr("y", y + 10).attr("fill", DML.css("--ink-2")).text(label.length > 22 ? label.slice(0, 21) + "…" : label);
+    var x0 = wfX(s.start);
+    if (s.type === "se" && s.paging.length) {
+      var pg = d3.sum(s.paging, function (p) { return p.ms; });
+      gWf.append("rect").attr("x", x0).attr("y", y).attr("height", 12).attr("rx", 2).attr("width", 0).attr("fill", "url(#hatch)")
+        .transition().duration(reduce ? 0 : 400).attr("width", Math.max(1, wfX(s.start + pg) - x0));
+      x0 = wfX(s.start + pg);
+    }
+    var col = s.type === "se" ? (s.hit ? DML.css("--ok") : s.dq ? DML.css("--warn") : DML.layerColor("semantic")) : DML.layerColor("report");
+    gWf.append("rect").attr("x", x0).attr("y", y).attr("height", 12).attr("rx", 2).attr("width", 0).attr("fill", col)
+      .transition().duration(reduce ? 0 : 400).attr("width", Math.max(1.5, wfX(s.start + s.ms) - x0));
+    gWf.append("text").attr("x", wfX(s.start + s.ms) + 5).attr("y", y + 10).attr("font-size", 10).attr("fill", DML.css("--ink-3")).text(fmt(s.ms) + " ms" + (s.type === "se" && s.paging.length ? " (" + s.paging.length + " paged)" : ""));
+  }
+
+  async function run() {
+    if (running) return;
+    running = true;
+    document.getElementById("run").disabled = true;
+    prepare();
+    var p = P_, md = mode();
+    var lg = document.getElementById("log"); if (lg) lg.innerHTML = "";
+    drawWfAxis(p.total); wfRow = 0;
+    var xV = EX + 60, cores = gEngine.selectAll("#cores rect");
+    var sub = gEngine.select("#lane-vis .body text:last-child");
+    for (var i = 0; i < p.steps.length; i++) {
+      var s = p.steps[i];
+      if (s.type === "dax") {
+        await token(xV, laneMid("vis"), xV, laneMid("fe"), DML.layerColor("report"), 600);
+      } else if (s.type === "plan") {
+        gEngine.selectAll(".fe-chip").classed("busy", true);
+        await wait(500);
+        gEngine.selectAll(".fe-chip").classed("busy", false);
+      } else if (s.type === "se") {
+        var row = gEngine.select("#seq-" + s.q.i), y = lane("se").y + 44 + s.q.i * 25 + 10;
+        row.classed("busy", true);
+        row.select("text.badge").text(s.hit ? "CACHE" : s.dq ? "SQL" : "SCAN").attr("fill", s.hit ? DML.css("--ok") : s.dq ? DML.css("--warn") : DML.layerColor("semantic"));
+        await token(xV + 40, laneMid("fe"), xV + 40, y, DML.layerColor("semantic"), 450, 5);
+        var colSet = new Set(s.q.cols);
+        gModel.selectAll(".row").classed("scan", function () { return colSet.has(this.getAttribute("data-id")); });
+        relSel.classed("live", function (r) { return s.q.joins.some(function (j) { return j.r.fact === r.fact && j.r.from === r.from && j.r.dim === r.dim; }); });
+        if (s.hit) {
+          await wait(300);
+        } else if (s.dq) {
+          await token(xV + 40, y, xV + 40, laneMid("data"), DML.css("--warn"), 500, 5);
+          gEngine.select("#lane-data .databox rect").attr("stroke", DML.css("--warn"));
+          await wait(msToAnim(s.scan) * 0.8);
+          gEngine.select("#lane-data .databox rect").attr("stroke", null);
+          await token(xV + 40, laneMid("data"), xV + 40, y, DML.css("--warn"), 500, 5);
+        } else {
+          // page in what's missing, then scan on every core
+          for (var j = 0; j < s.paging.length; j++) {
+            var pid = s.paging[j].col, chip = gEngine.select('#lane-mem .mem[data-id="' + pid + '"]');
+            if (!chip.empty()) {
+              var tf = chip.attr("transform").match(/translate\(([-\d.]+),([-\d.]+)\)/), cx = EX + 16 + (+tf[1]) + 20, cy = lane("mem").y + 44 + (+tf[2]) + 8;
+              token(cx, laneMid("data"), cx, cy, DML.layerColor("bronze"), 420, 4);
+              chip.select("rect.fill").transition().duration(reduce ? 0 : 420 * pace).attr("width", +chip.attr("data-w"));
+              chip.classed("res", true);
+              await wait(Math.min(200, 60 + s.paging[j].ms * 4));
+            }
+          }
+          if (s.paging.length) await wait(300);
+          gEngine.selectAll("#lane-mem .mem").classed("hot", function () { return colSet.has(this.getAttribute("data-id")); });
+          cores.classed("on", true);
+          var dur = msToAnim(s.scan);
+          var blink = setInterval(function () { cores.classed("on", function () { return Math.random() > 0.25; }); }, 90);
+          await wait(dur);
+          clearInterval(blink); cores.classed("on", false);
+          gEngine.selectAll("#lane-mem .mem").classed("hot", false);
+        }
+        await token(xV + 40, y, xV + 40, laneMid("fe"), DML.layerColor("gold"), 450, 5);
+        row.classed("busy", false);
+        relSel.classed("live", false);
+        gModel.selectAll(".row").classed("scan", false);
+      } else if (s.type === "fe") {
+        var k = s.measure.name + (s.measure.ti ? "|py" : "");
+        gEngine.selectAll(".fe-chip").filter(function () { var d = this.getAttribute("data-k"); return d === s.measure.name || d === s.measure.name + "|py"; }).classed("busy", true);
+        await wait(msToAnim(s.ms) * 0.7);
+        gEngine.selectAll(".fe-chip").filter(function () { var d = this.getAttribute("data-k"); return d === s.measure.name || d === s.measure.name + "|py"; }).classed("busy", false).classed("lit", true);
+      } else if (s.type === "result") {
+        gEngine.selectAll(".fe-chip").classed("lit", true);
+        await token(xV, laneMid("fe"), xV, laneMid("vis"), DML.layerColor("report"), 600, 7);
+      }
+      wfBar(s);
+      logStep(s);
+    }
+    // commit engine state
+    if (md === "dl") resident = p.res;
+    if (document.getElementById("cache").checked && md !== "dq") seCache = p.cache;
+    var logKeep = document.getElementById("log").innerHTML;
+    renderPanel(true);
+    document.getElementById("log").innerHTML = logKeep;
+    var totalCols = d3.sum(semTables, function (t) { return t.columns.length; });
+    gEngine.select("#sub-mem").text("column segments in memory: " + residentCount() + " of " + totalCols + " columns");
+    gWf.append("text").attr("x", VW - 60).attr("y", 26 + wfRow * 15 + 14).attr("text-anchor", "end").attr("font-weight", 700).attr("font-size", 12).text("Total " + fmt(p.total) + " ms · run it again to see the cache" + (md === "dl" ? " and warm columns" : ""));
+    running = false;
+    document.getElementById("run").disabled = false;
+  }
+
+  DML.load().then(init).catch(function (e) { document.getElementById("stage").innerHTML = '<p style="padding:20px">' + DML.esc(e.message) + "</p>"; });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="dimensional-modeling">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dimensional modeling · Data Model Lab</title>
+<meta name="description" content="Grain first. Fact table types, additivity, star versus snowflake, degenerate, junk, role-playing and bridge dimensions, surrogate keys and the unknown member.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 02</p>
+    <h1>Dimensional modeling</h1>
+    <p class="lede">Dimensional modeling is still the best default for analytics because it matches how people ask questions: measure something, then slice it by context. Every good dimensional model starts with one sentence, the grain.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>Four steps, grain first</h2>
+<p>Kimball's four-step design process has survived three generations of platforms because it forces decisions in the right order:</p>
+<ol>
+<li><strong>Select the business process.</strong> Not a department or a report. A process that produces events: taking orders, shipping, counting stock, setting budgets.</li>
+<li><strong>Declare the grain.</strong> State exactly what one row means, in a sentence.</li>
+<li><strong>Identify the dimensions.</strong> The context that is true for one row at that grain.</li>
+<li><strong>Identify the facts.</strong> The numeric measurements that are true for one row at that grain.</li>
+</ol>
+<p>For the sample model's sales process: <em>"fact_sales has one row per sales order line."</em> The dimensions that hold a single value at that grain are order date, ship date, customer, product, warehouse (ship-from) and salesperson. The facts are <code>quantity</code>, <code>gross_amount</code>, <code>discount_amount</code>, <code>net_amount</code> and <code>cost_amount</code>. The order number is context too, but it has no attributes of its own, so it stays on the fact as a degenerate dimension.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Write the grain as a sentence before you write a column list. If a proposed column does not have exactly one value at that grain, it belongs in another table.</p></div>
+<div class="callout callout--warn"><strong>Watch out</strong><p>Mixed grain is the most common modeling bug. Order-level freight copied onto every line row will be summed once per line. Either allocate it to lines with a stated rule, or give it its own order-grain fact.</p></div>
+
+<h2>Fact table types</h2>
+<table>
+<thead><tr><th>Type</th><th>One row per</th><th>Sample</th><th>Measures</th><th>Load pattern</th></tr></thead>
+<tbody>
+<tr><td>Transaction</td><td>Event</td><td><code>fact_sales</code> (order line)</td><td>Mostly additive</td><td>Insert; occasional correction updates</td></tr>
+<tr><td>Periodic snapshot</td><td>Entity per period</td><td><code>fact_inventory_daily</code> (product x warehouse x day)</td><td>Balances, semi-additive</td><td>Insert one full slice per period</td></tr>
+<tr><td>Accumulating snapshot</td><td>Process instance, updated as milestones happen</td><td>An order fulfillment fact with ordered, picked, shipped and invoiced dates</td><td>Lags, durations, counts</td><td>Insert, then update in place</td></tr>
+<tr><td>Factless</td><td>Event or coverage with no numeric measure</td><td>Salesperson assigned to territory per month; products on promotion</td><td>Counts of rows</td><td>Insert</td></tr>
+</tbody>
+</table>
+<p><code>fact_budget</code> is a plan fact at a coarser grain (month x product category x region). It behaves like a periodic snapshot but does not share the grain of the dimensions it describes, which is why it needs shrunken dimensions. That case gets its own treatment in <a href="conformed-dimensions.html">Conformed dimensions</a>.</p>
+
+<h2>Additive, semi-additive, non-additive</h2>
+<p>Additivity tells you how a fact may be aggregated, and it is the first thing a semantic model author needs to know about each column.</p>
+<ul>
+<li><strong>Additive</strong> facts sum across every dimension. <code>net_amount</code> can be summed by customer, product, day or all of them.</li>
+<li><strong>Semi-additive</strong> facts sum across some dimensions but not time. <code>on_hand_qty</code> sums across warehouses on a given day, but summing it across the days of a month produces nonsense. Month-level inventory is the closing balance (or an average), not a total.</li>
+<li><strong>Non-additive</strong> facts never sum: ratios, percentages and unit prices. Store the additive components (<code>net_amount</code>, <code>cost_amount</code>) and compute <em>Margin %</em> at query time.</li>
+</ul>
+<pre><code class="language-sql">-- Month-end on-hand by category: filter to the closing day, then sum across products and warehouses
+SELECT d.year_month,
+       p.category,
+       SUM(f.on_hand_qty) AS closing_on_hand_qty
+FROM gold.fact_inventory_daily AS f
+JOIN gold.dim_date    AS d ON d.date_key = f.date_key
+JOIN gold.dim_product AS p ON p.product_key = f.product_key
+WHERE d.is_month_end = 1
+GROUP BY d.year_month, p.category;</code></pre>
+
+<h2>Star or snowflake</h2>
+<table>
+<thead><tr><th></th><th>Star</th><th>Snowflake</th></tr></thead>
+<tbody>
+<tr><td>Dimension shape</td><td>One wide, denormalized table per dimension</td><td>Hierarchy levels split into related tables</td></tr>
+<tr><td>Joins per query</td><td>One per dimension</td><td>One per level</td></tr>
+<tr><td>Storage</td><td>Repeats hierarchy text (cheap in columnar storage)</td><td>Stores each level once</td></tr>
+<tr><td>Semantic model</td><td>Simple filter propagation, fewer relationships</td><td>Longer filter chains, more tables to hide</td></tr>
+<tr><td>Where it fits</td><td>Gold and the semantic model</td><td>Silver entities, or a shared level used by a coarser fact</td></tr>
+</tbody>
+</table>
+<p>Use a star in gold. Columnar engines compress repeated category and subcategory strings to almost nothing, so the storage argument for snowflaking mostly disappeared with row stores. Normalization still has a home in silver, where entities are kept clean and singular. The one legitimate snowflake-like shape in gold is a shrunken dimension (a category-level table derived from <code>dim_product</code>) for a fact that lives at category grain.</p>
+
+<h2>Special-purpose dimensions</h2>
+<h3>Degenerate dimensions</h3>
+<p><code>order_number</code> on <code>fact_sales</code> is a dimension with no attributes. Building a <code>dim_order</code> with one column would only add a join. Keep it on the fact, and in the semantic model expose it for drill-through and hide it from casual browsing.</p>
+<h3>Junk dimensions</h3>
+<p>Low-cardinality flags and codes (order channel, rush flag, payment terms) clutter a fact and each make a poor dimension on their own. Combine them into one small table, say <code>dim_order_profile</code>, with one row per observed combination and one key on the fact. The sample model does not need one yet; it is the first thing to add when the order header grows flags.</p>
+<h3>Role-playing dimensions</h3>
+<p><code>dim_date</code> plays two roles on <code>fact_sales</code>: <code>order_date_key</code> and <code>ship_date_key</code>. In the warehouse that is one physical table joined twice with aliases. In the semantic model it becomes one active and one inactive relationship, or two copies of the table; <a href="semantic-models.html">Semantic model preparation</a> covers the trade-off.</p>
+<h3>Bridge tables</h3>
+<p>When a fact row relates to many members of a dimension (an order credited to two salespeople at 60/40), a bridge table resolves it: <code>bridge_sales_credit</code> with a group key, <code>salesperson_key</code> and an <code>allocation_weight</code> that sums to 1 per group. Measures multiply by the weight to avoid double counting. Bridges are powerful and easy to misuse, so add one only when the many-to-many is real in the business, not an artifact of a messy source.</p>
+
+<h2>Surrogate keys and the unknown member</h2>
+<p>Every gold dimension gets a surrogate key (<code>customer_key</code>) separate from the business key (<code>customer_id</code>). Surrogates make Type 2 history possible (one business key, many versions), insulate the model from source key changes and merges, and give the semantic engine compact integer joins. Date keys are the accepted exception: an integer <code>yyyymmdd</code> <code>date_key</code> is readable and stable.</p>
+<p>Each dimension also carries reserved members: <code>-1</code> for "Unknown" (the source value was missing or did not match) and, where it helps, <code>-2</code> for "Not applicable" (a line that has not shipped has no ship date). Fact loads resolve to these members instead of dropping rows or writing NULL keys, so totals always reconcile to the source.</p>
+<pre><code class="language-sql">INSERT INTO gold.fact_sales
+    (order_date_key, ship_date_key, customer_key, product_key, warehouse_key, salesperson_key,
+     order_number, line_number, quantity, gross_amount, discount_amount, net_amount, cost_amount)
+SELECT
+    COALESCE(od.date_key, -1),
+    CASE WHEN s.ship_date IS NULL THEN -2 ELSE COALESCE(sd.date_key, -1) END,
+    COALESCE(c.customer_key, -1),
+    COALESCE(p.product_key, -1),
+    COALESCE(w.warehouse_key, -1),
+    COALESCE(sp.salesperson_key, -1),
+    s.order_number, s.line_number,
+    s.quantity, s.gross_amount, s.discount_amount, s.net_amount, s.cost_amount
+FROM silver.sales_order_line AS s
+LEFT JOIN gold.dim_date AS od ON od.calendar_date = s.order_date
+LEFT JOIN gold.dim_date AS sd ON sd.calendar_date = s.ship_date
+LEFT JOIN gold.dim_customer AS c
+       ON c.customer_id = s.customer_id
+      AND s.order_date &gt;= c.valid_from AND s.order_date &lt; c.valid_to
+LEFT JOIN gold.dim_product AS p ON p.product_id = s.product_id
+LEFT JOIN gold.dim_warehouse AS w ON w.warehouse_id = s.warehouse_id
+LEFT JOIN gold.dim_salesperson AS sp ON sp.salesperson_id = s.salesperson_id;</code></pre>
+<p>Note the customer join: because <code>dim_customer</code> is Type 2, the lookup is point-in-time, finding the version that was valid on the order date. The other dimensions are Type 1 in the sample, so a plain business-key match is enough.</p>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>Fabric Warehouse has added <code>IDENTITY</code> columns (bigint, unique but not guaranteed contiguous); check that your workspace has them before relying on them. The portable approach in both Warehouse and Spark is <code>MAX(existing key) + ROW_NUMBER()</code> inside the load transaction. Either way, keep keys as integers: VertiPaq compresses and joins integer keys far better than long strings or binary hashes, which matters for Direct Lake memory.</p></div>
+<div class="callout callout--open"><strong>Open question</strong><p>Hash-based surrogate keys (a 64-bit hash of the business key and version) remove the need for a sequence and parallelize nicely in Spark, but they are wide, random and collision-prone if truncated carelessly. Are they worth it for a lakehouse feeding Direct Lake? The deciding factor is whether you load dimensions in parallel across engines.</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/star-schema.html">Star schema explorer</a> shows each sample fact at its grain with its dimensions and the role-playing date, and the <a href="../explore/bus-matrix.html">Bus matrix</a> lays out which dimensions each fact shares.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

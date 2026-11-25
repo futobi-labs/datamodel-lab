@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Guide · Data Model Lab</title>
+<meta name="description" content="A practitioner's field guide to data modeling today: medallion layers, dimensional modeling, slowly changing dimensions, semantic models, engine layering, naming and metadata-driven pipelines.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide</p>
+    <h1>Field Guide</h1>
+    <p class="lede">What is commonplace in data modeling today, written down plainly: opinions where practice has settled, and open questions where it has not.</p>
+  </header>
+  <div class="prose" style="max-width: var(--prose); margin-bottom: 36px;">
+    <p>These pages are for practitioners who build lakehouses, warehouses and semantic models for a living: data engineers, analytics engineers and BI architects who already know what a star schema is and want a compact, opinionated reference for the decisions that come up every week. Where common practice is clear, the guide says so and gives a rule. Where it is not, it names the deciding factor instead of hiding behind "it depends."</p>
+    <p>Every example uses the same small, generic order-to-cash and inventory model: ERP, CRM and file sources landing in <span class="chip chip--bronze">bronze</span>, cleaned into <span class="chip chip--silver">silver</span>, shaped into a <span class="chip chip--gold">gold</span> star (<code>fact_sales</code>, <code>fact_inventory_daily</code>, <code>fact_budget</code>), and served by the "Sales &amp; Inventory" <span class="chip chip--semantic">semantic</span> model behind two <span class="chip chip--report">report</span>s. The explorations visualize that same model, so any page here can be seen there. Platform specifics are written for Microsoft Fabric, though most of the guidance carries to Databricks, Snowflake or any other lakehouse.</p>
+    <h2>How to read these pages</h2>
+    <p>Five kinds of callout recur on every page:</p>
+    <div class="callout callout--rule"><strong>Rule of thumb</strong><p>An opinionated default you can apply without further thought. Break it when you can say why.</p></div>
+    <div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>How the idea lands in Fabric specifically: Lakehouse, Warehouse, Direct Lake, pipelines. Platform behavior changes often, so these notes flag anything that was recently in preview.</p></div>
+    <div class="callout callout--warn"><strong>Watch out</strong><p>A common failure mode, usually one that produces numbers that look right until someone checks.</p></div>
+    <div class="callout callout--open"><strong>Open question</strong><p>Something practice has not settled. These collect on the <a href="open-questions.html">Open questions</a> page with a short take on each.</p></div>
+    <div class="callout callout--see"><strong>See it</strong><p>A link to the exploration that shows the idea on the sample model.</p></div>
+  </div>
+  <div data-cards="guide"></div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

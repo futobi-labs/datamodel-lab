@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en" data-root="../" data-section="explore" data-page="synthesis">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data synthesis · Data Model Lab</title>
+<meta name="description" content="Fly through thousands of stacked cross-section panes and watch specks of data settle into tables, crystallize into facts and dimensions, join into a semantic model and surface as reports.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<script src="../assets/js/site.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="../assets/js/model.js"></script>
+<style>
+  /* The stack is always viewed against a dark field, in either theme. */
+  .syn-stage {
+    position: relative; height: 80vh; min-height: 560px; border-radius: 12px; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 45%, #10151d 0%, #080b10 60%, #030406 100%);
+    border: 1px solid var(--rule); cursor: crosshair; user-select: none; -webkit-user-select: none; outline: none;
+  }
+  .syn-stage:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .syn-stage:fullscreen { height: 100vh; border-radius: 0; }
+  .syn-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .syn-stage.is-grab { cursor: grabbing; }
+  .syn-stage.is-hot { cursor: pointer; }
+  .hud { position: absolute; color: #dfe6ee; font: 12px/1.4 var(--font-sans); pointer-events: none; text-shadow: 0 1px 2px #000; }
+  .hud--rail { left: 12px; top: 12px; pointer-events: auto; }
+  .hud--rail h5 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: #8794a3; font-weight: 600; }
+  .rail { list-style: none; margin: 0; padding: 0; border-left: 2px solid #26303c; }
+  .rail button {
+    all: unset; cursor: pointer; display: grid; grid-template-columns: 14px auto; gap: 2px 8px; align-items: center;
+    padding: 4px 10px 4px 8px; margin-left: -2px; border-left: 2px solid transparent; border-radius: 0 6px 6px 0;
+    font-size: 12.5px; color: #c3cdd8;
+  }
+  .rail button:hover, .rail button:focus-visible { background: rgba(255,255,255,.06); outline: none; }
+  .rail button.on { border-left-color: currentColor; background: rgba(255,255,255,.08); color: #fff; }
+  .rail .sw { width: 10px; height: 10px; border-radius: 2px; grid-row: span 2; box-shadow: 0 0 8px currentColor; }
+  .rail b { font-weight: 650; }
+  .rail small { grid-column: 2; font-size: 11px; color: #8794a3; margin-top: -2px; }
+  .hud--depth { right: 14px; top: 12px; text-align: right; }
+  .hud--depth .big { font: 600 24px/1 var(--font-mono); color: #fff; letter-spacing: -.02em; }
+  .hud--depth .sub { color: #a9b5c2; margin-top: 4px; }
+  .hud--stats { right: 14px; bottom: 12px; text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: #b9c4cf; }
+  .hud--stats b { color: #fff; font-weight: 500; }
+  .hud--hint { left: 50%; transform: translateX(-50%); bottom: 12px; font-size: 11.5px; color: #7c8896; white-space: nowrap; }
+  .hud--follow { left: 50%; top: 12px; transform: translateX(-50%); background: rgba(0,0,0,.55); border: 1px solid #3c4b5c; border-radius: 999px; padding: 4px 12px; color: #d8e8ff; display: none; }
+  .hud--follow.on { display: block; }
+  .hud--touch { display: none; }
+  .hud--close { display: none; right: 14px; top: 64px; pointer-events: auto; }
+  .hud--close button { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 999px; background: rgba(0,0,0,.6); border: 1px solid #3c4b5c; color: #e6edf5; font-size: 13px; }
+  .syn-stage.is-max { position: fixed; inset: 0; z-index: 1000; height: 100%; min-height: 0; border-radius: 0; border: 0; }
+  .syn-stage.is-max .hud--close { display: block; }
+  body.syn-lock { overflow: hidden; }
+  @media (pointer: coarse) {
+    .hud--hint { display: none; }
+    .hud--touch { display: block; left: 12px; right: 12px; bottom: 10px; text-align: center; font-size: 11.5px; color: #8b97a5; }
+  }
+  @media (max-width: 760px) {
+    .hud--hint { display: none; } .rail small { display: none; }
+    .syn-stage { height: 68vh; height: 68svh; min-height: 400px; }
+    .rail button { padding: 3px 8px 3px 6px; font-size: 12px; }
+    .hud--depth .big { font-size: 19px; }
+    .hud--stats { display: none; }
+  }
+
+  .journal { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+  .journal li { position: relative; padding: 6px 0 6px 16px; border-bottom: 1px solid var(--rule); }
+  .journal li::before { content: ""; position: absolute; left: 0; top: 12px; width: 8px; height: 8px; border-radius: 2px; background: var(--c, var(--ink-3)); }
+  .journal li.is-ahead { opacity: .45; }
+  .journal code { font-size: 11.5px; }
+  .journal .tx { display: block; color: var(--ink-3); font-size: 12px; }
+  .stages { list-style: none; padding: 0; margin: 8px 0; }
+  .stages li { padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; color: var(--ink-2); }
+  .stages b { color: var(--ink); }
+  .stages .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+  .syn-table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  .syn-table th, .syn-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .syn-table th { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+  .viz-controls input[type="range"] { width: 110px; }
+  .btn.is-on { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page page--wide">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Exploration · 07</p>
+    <h1>Data synthesis</h1>
+    <p class="lede">Two thousand four hundred glass panes, stacked in the order data travels. Each pane is a cross-section of the platform at one depth. Fly through them and watch specks of raw data drift like sand, settle into tables, crystallize into facts and dimensions, join into a semantic model and finally surface as the visuals on a report.</p>
+  </header>
+  <div class="viz-controls">
+    <button class="btn btn--primary" type="button" id="fly">Fly through</button>
+    <button class="btn" type="button" id="pump">Send a load</button>
+    <button class="btn" type="button" id="follow">Follow a grain</button>
+    <label>Flow <input type="range" id="speed" min="0" max="4" step="0.1" value="1"></label>
+    <button class="btn" type="button" id="pause">Pause</button>
+    <button class="btn" type="button" id="overview">Pull back</button>
+    <button class="btn" type="button" id="full">Full screen</button>
+  </div>
+  <div class="viz-shell">
+    <div class="syn-stage" id="stage" tabindex="0">
+      <canvas id="cv" role="img" aria-label="A long stack of translucent panes seen in perspective. Grains of data enter the first panes scattered like sand and, pane by pane, gather into source tables, bronze and silver tables, gold facts and dimensions, a semantic model and report visuals. The panel beside it describes whatever you select."></canvas>
+      <div class="hud hud--rail"><h5>Depth</h5><ul class="rail" id="rail"></ul></div>
+      <div class="hud hud--depth"><div class="big" id="paneNo">Outside</div><div class="sub" id="zoneName">the stack</div></div>
+      <div class="hud hud--follow" id="followtag">Riding one grain · scroll, swipe or drag to let go</div>
+      <div class="hud hud--stats" id="stats"></div>
+      <div class="hud hud--touch">Swipe up or down to fly · pinch to zoom along · swipe sideways to turn · tap a table to trace it</div>
+      <div class="hud hud--close"><button type="button" id="unmax">Exit full screen</button></div>
+      <div class="hud hud--hint">Scroll to fly through the panes · move the mouse to tilt · drag to turn · click a table to trace it</div>
+    </div>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+  <section class="viz-about prose">
+    <h2>Reading the stack</h2>
+    <p>Depth is the journey. The first panes are the operational systems and the last are the reports, with every medallion layer taking its own band of panes in between. A pane shows where every grain of data is at that depth, so looking straight down the stack shows one layer as a cross-section, and pulling back shows the whole column of glass with the streams running through it.</p>
+    <table class="syn-table">
+      <thead><tr><th>Band</th><th>Layer</th><th>What you see on the panes</th></tr></thead>
+      <tbody id="bandtable"></tbody>
+    </table>
+    <h2>What the grains are</h2>
+    <p>Each grain is a thread through the stack that follows the real column lineage in the sample model. It enters as a loose speck, lands in a source column, then moves pane by pane to the next column it feeds, holding its place while it sits in a layer and sweeping sideways when a pipeline carries it to the next one. Grains that share a column pack together, so tables appear where grains settle and tighten as the data gets cleaner. Columns that are made rather than copied, such as surrogate keys and the date dimension, are born mid-stack. A grain whose column is dropped simply stops.</p>
+    <p>The bright moving points are loads in motion. Send a load to push one batch through every source at once, follow a grain to ride along with one value and read its journal, or click any table to see only the grains that pass through it.</p>
+    <h2>Two honest caveats</h2>
+    <p>Grains are illustrative, not row counts: the sample model has structure but no data. And the layouts on each band are drawn for clarity, not taken from any tool. To watch what happens once a query reaches the model, open the <a href="semantic-engine.html">semantic engine</a>.</p>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------ vocabulary
+  var ORDER = ["source", "bronze", "silver", "gold", "semantic", "report"];
+  var ZONE = { source: [0, 0.15], bronze: [0.15, 0.31], silver: [0.31, 0.48], gold: [0.48, 0.67], semantic: [0.67, 0.85], report: [0.85, 1] };
+  var STAGE = {
+    source:   { verb: "Specks",  what: "Raw values scattered like sand, drifting toward the operational tables that hold them." },
+    bronze:   { verb: "Grains",  what: "Sand settles into raw tables: still source-shaped, loosely packed, nothing thrown away." },
+    silver:   { verb: "Tables",  what: "Cleaned, typed and de-duplicated. Grains tighten into conformed business entities." },
+    gold:     { verb: "Stars",   what: "Entities crystallize around facts at a declared grain, with dimensions clustered around them." },
+    semantic: { verb: "Model",   what: "The stars join through relationships and the measures table draws from the facts." },
+    report:   { verb: "Answers", what: "Each visual is fed by a thin stream reaching back through every pane it depends on." }
+  };
+  var JIT = { source: 0.040, bronze: 0.026, silver: 0.016, gold: 0.010, semantic: 0.008, report: 0.014 };
+  var QUIET = { "pass-through": 1, "rename": 1 };
+  var NP = 2400, NS = 150, LZ = 14, HX = 1.6, HY = 1.0, NEAR = 0.15, PIV = 2.4, FAR = 70;
+  var SAND = "#cdbb92";
+
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var stage = document.getElementById("stage"), cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  var panel = document.getElementById("panel");
+  var W = 800, H = 600, DPR = Math.min(2, window.devicePixelRatio || 1);
+  var model, tables = [], LC = {}, rects = {}, colPos = {}, links = { gold: [], semantic: [] };
+  var fibers = [], SX, SY, SM, sliceU = [], pulses = [], sparks = [];
+  var sel = null, hover = null, follow = null, lastJournal = -1;
+  var T = 0, last = 0, paused = false, flying = false, flow = 1;
+  var stats = { transforms: 0, arrivals: 0 };
+  var cam = { u: -0.62, ut: -0.62, dyaw: 0, dpitch: 0, tx: 0, ty: 0, ttx: 0, tty: 0, px: 0, py: 0, ppx: 0, ppy: 0 };
+  var P = {};
+
+  function ord(l) { return ORDER.indexOf(l); }
+  function layerOfCol(id) { return model.columnById[id].table.layer; }
+  function zoneAt(u) { for (var i = ORDER.length - 1; i >= 0; i--) if (u >= ZONE[ORDER[i]][0]) return ORDER[i]; return null; }
+  function settleU(l) { var z = ZONE[l]; return z[0] + (z[1] - z[0]) * 0.34; }
+  var LABEL = {}, TITLE = {};
+  function labelU(l) { return sliceU[LABEL[l]]; }
+  function smooth(t) { return t * t * (3 - 2 * t); }
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ------------------------------------------------------------ layouts
+  // Every band gets its own arrangement on the pane, in plane units (x across, y down).
+  function sizeRect(t, cell) {
+    var n = Math.max(1, t.columns.length);
+    var nc = t.layer === "report" ? Math.min(3, n) : Math.max(2, Math.ceil(Math.sqrt(n * 1.6)));
+    var nr = Math.ceil(n / nc);
+    var cw = t.layer === "report" ? cell * 5 : cell, ch = t.layer === "report" ? cell * 3.4 : cell;
+    return { nc: nc, nr: nr, cw: cw, ch: ch, w: nc * cw + 0.06, h: nr * ch + 0.1 };
+  }
+  function shelf(list, maxW) {
+    var cell = 0.07, out;
+    for (var tries = 0; tries < 12; tries++) {
+      out = {}; var rows = [], row = [], rw = 0;
+      list.forEach(function (t) {
+        var r = sizeRect(t, cell);
+        if (row.length && rw + r.w > maxW) { rows.push(row); row = []; rw = 0; }
+        row.push([t, r]); rw += r.w + 0.12;
+      });
+      if (row.length) rows.push(row);
+      var totalH = rows.reduce(function (s, rr) { return s + d3.max(rr, function (x) { return x[1].h; }) + 0.14; }, -0.14);
+      if (totalH <= 1.78 || tries === 11) {
+        var y = -totalH / 2;
+        rows.forEach(function (rr) {
+          var w = d3.sum(rr, function (x) { return x[1].w; }) + 0.12 * (rr.length - 1), x = -w / 2, hh = d3.max(rr, function (q) { return q[1].h; });
+          rr.forEach(function (q) { var r = q[1]; r.x = x; r.y = y + (hh - r.h) / 2; out[q[0].id] = r; x += r.w + 0.12; });
+          y += hh + 0.14;
+        });
+        return out;
+      }
+      cell *= 0.9;
+    }
+    return out;
+  }
+  function starLayout(list, lks, cell) {
+    var nodes = list.map(function (t, i) {
+      var r = sizeRect(t, cell), isFact = t.kind === "fact" || t.kind === "measure-table" || (t.layer === "semantic" && lks.some(function (k) { return k.source === t.id && k.kind === "rel"; }));
+      var a = i / list.length * Math.PI * 2;
+      return { id: t.id, t: t, r: r, fact: isFact, x: isFact ? (i - list.length / 2) * 60 : Math.cos(a) * 160, y: isFact ? (t.kind === "measure-table" ? -40 : 0) : Math.sin(a) * 110 };
+    });
+    var byId = {}; nodes.forEach(function (n) { byId[n.id] = n; });
+    var L = lks.filter(function (k) { return byId[k.source] && byId[k.target]; }).map(function (k) { return { source: k.source, target: k.target, kind: k.kind }; });
+    var sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(L).id(function (d) { return d.id; }).distance(function (k) { return k.kind === "feeds" ? 120 : 150; }).strength(0.6))
+      .force("charge", d3.forceManyBody().strength(function (d) { return d.fact ? -900 : -500; }))
+      .force("collide", d3.forceCollide().radius(function (d) { return Math.max(d.r.w, d.r.h) * 55 + 10; }).iterations(3))
+      .force("x", d3.forceX(0).strength(0.04)).force("y", d3.forceY(0).strength(0.07))
+      .stop();
+    for (var i = 0; i < 400; i++) sim.tick();
+    var x0 = d3.min(nodes, function (n) { return n.x - n.r.w * 50; }), x1 = d3.max(nodes, function (n) { return n.x + n.r.w * 50; });
+    var y0 = d3.min(nodes, function (n) { return n.y - n.r.h * 50; }), y1 = d3.max(nodes, function (n) { return n.y + n.r.h * 50; });
+    var s = Math.min(2.9 / ((x1 - x0) / 100), 1.76 / ((y1 - y0) / 100), 1.4);
+    var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, out = {};
+    nodes.forEach(function (n) {
+      var px = (n.x - cx) / 100 * s, py = (n.y - cy) / 100 * s;
+      var r = n.r; r.x = px - r.w / 2; r.y = py - r.h / 2; out[n.id] = r;
+    });
+    return out;
+  }
+  function mainUpstream(t, layer) {
+    var count = {};
+    t.columns.forEach(function (c) {
+      (model.colUp[c.id] || []).forEach(function (e) { var ft = model.columnById[e.from].table; if (ft.layer === layer) count[ft.id] = (count[ft.id] || 0) + 1; });
+    });
+    var best = null; Object.keys(count).forEach(function (k) { if (!best || count[k] > count[best]) best = k; });
+    return best;
+  }
+  function layout() {
+    var by = {}; ORDER.forEach(function (l) { by[l] = []; });
+    tables.forEach(function (t) { by[t.layer].push(t); });
+    // source grouped by system, bronze and silver in the order of what feeds them
+    by.source.sort(function (a, b) { return d3.ascending(a.system + a.id, b.system + b.id); });
+    function feedOrder(list, up) { var idx = {}; by[up].forEach(function (t, i) { idx[t.id] = i; }); list.sort(function (a, b) { return (idx[mainUpstream(a, up)] || 0) - (idx[mainUpstream(b, up)] || 0); }); }
+    feedOrder(by.bronze, "source"); feedOrder(by.silver, "bronze");
+    Object.assign(rects, shelf(by.source, 2.9), shelf(by.bronze, 2.9), shelf(by.silver, 2.9), shelf(by.report, 3.0));
+    // semantic links from the declared relationships, measures linked to the facts they read
+    var sem = {};
+    model.relationships.forEach(function (r) {
+      var a = "semantic." + r.fact, b = "semantic." + r.dim, k = a + "|" + b;
+      if (model.tableById[a] && model.tableById[b] && !sem[k]) { sem[k] = 1; links.semantic.push({ source: a, target: b, kind: "rel", active: r.active !== false }); }
+    });
+    by.semantic.forEach(function (t) {
+      if (t.kind !== "measure-table") return;
+      var feeds = {};
+      t.columns.forEach(function (c) { (model.colUp[c.id] || []).forEach(function (e) { var ft = model.columnById[e.from].table; if (ft.layer === "semantic" && ft.id !== t.id) feeds[ft.id] = 1; }); });
+      Object.keys(feeds).forEach(function (f) { links.semantic.push({ source: t.id, target: f, kind: "feeds" }); });
+    });
+    // gold links: the same relationships, mapped down to the gold tables that feed each semantic table
+    var g = {}; by.semantic.forEach(function (t) { g[t.id] = mainUpstream(t, "gold"); });
+    var seen = {};
+    links.semantic.forEach(function (k) {
+      if (k.kind !== "rel") return;
+      var a = g[k.source], b = g[k.target];
+      if (a && b && a !== b && !seen[a + b]) { seen[a + b] = 1; links.gold.push({ source: a, target: b, kind: "rel" }); }
+    });
+    Object.assign(rects, starLayout(by.gold, links.gold, 0.07), starLayout(by.semantic, links.semantic, 0.065));
+    tables.forEach(function (t) {
+      var r = rects[t.id];
+      t.columns.forEach(function (c, j) {
+        colPos[c.id] = [r.x + 0.03 + (j % r.nc + 0.5) * r.cw, r.y + 0.08 + (Math.floor(j / r.nc) + 0.5) * r.ch];
+      });
+    });
+  }
+
+  // ------------------------------------------------------------ fibers
+  // A fiber is one grain's path through the whole stack: anchor points [u, x, y] eased between.
+  function walk(start, rnd) {
+    var chain = [{ c: start, tx: null }], cur = start, same = 0;
+    for (var g = 0; g < 12; g++) {
+      var downs = model.colDown[cur] || [];
+      if (!downs.length) break;
+      var cl = ord(layerOfCol(cur));
+      var cross = downs.filter(function (e) { return ord(layerOfCol(e.to)) > cl; });
+      var pick = cross;
+      if (!cross.length) {
+        if (same >= 2) break;
+        pick = downs.filter(function (e) { return !chain.some(function (n) { return n.c === e.to; }); });
+        same++;
+      }
+      if (!pick.length) break;
+      var e = pick[Math.floor(rnd() * pick.length)];
+      chain.push({ c: e.to, tx: e.transform }); cur = e.to;
+    }
+    return chain;
+  }
+  function makeFiber(chain, rnd, born) {
+    var count = {}, pts = [], events = [], tset = {};
+    chain.forEach(function (n) {
+      var L = layerOfCol(n.c), z = ZONE[L], len = z[1] - z[0], k = count[L] = (count[L] || 0);
+      count[L]++;
+      n.u = L === "source" ? z[0] + len * 0.85 : z[0] + len * Math.min(0.8, 0.3 + 0.22 * k);
+      var p = colPos[n.c], a = rnd() * 6.2832, r = JIT[L] * Math.sqrt(rnd());
+      n.x = p[0] + Math.cos(a) * r; n.y = p[1] + Math.sin(a) * r;
+      tset[model.columnById[n.c].table.id] = 1;
+    });
+    var first = chain[0];
+    if (!born) pts.push(0, (rnd() * 2 - 1) * HX * 0.96, (rnd() * 2 - 1) * HY * 0.94);
+    else { var a0 = rnd() * 6.2832; pts.push(Math.max(0, first.u - 0.05), first.x + Math.cos(a0) * 0.35, first.y + Math.sin(a0) * 0.25); }
+    chain.forEach(function (n, i) {
+      var next = chain[i + 1];
+      pts.push(n.u, n.x, n.y);
+      if (i > 0) events.push([n.u, n.tx, n.c]);
+      var hold = next ? next.u - Math.min(0.09, 0.6 * (next.u - n.u)) : (layerOfCol(n.c) === "report" ? 1 : ZONE[layerOfCol(n.c)][1]);
+      pts.push(hold, n.x, n.y);
+    });
+    return { pts: pts, start: pts[0], end: pts[pts.length - 3], chain: chain, events: events, tables: tset, born: born, ph: rnd() * 100, len: chain.length };
+  }
+  var OUT = [0, 0, 0];
+  // position of fiber f at depth u into OUT; returns false when the grain does not exist there
+  function fpos(f, u) {
+    var p = f.pts, n = p.length;
+    if (u < p[0] || u > p[n - 3]) return false;
+    for (var i = 0; i < n - 3; i += 3) {
+      if (u <= p[i + 3]) {
+        var u0 = p[i], u1 = p[i + 3], t = u1 > u0 ? (u - u0) / (u1 - u0) : 1, e = smooth(t);
+        var x = p[i + 1] + (p[i + 4] - p[i + 1]) * e, y = p[i + 2] + (p[i + 5] - p[i + 2]) * e;
+        var moving = p[i + 1] !== p[i + 4] || p[i + 2] !== p[i + 5];
+        if (i === 0 && !f.born) { var w = 1 - e; x += w * 0.09 * Math.sin(u * 55 + f.ph); y += w * 0.07 * Math.cos(u * 43 + f.ph * 1.3); }
+        OUT[0] = x; OUT[1] = y; OUT[2] = moving ? 1 : 0;
+        return true;
+      }
+    }
+    return false;
+  }
+  function buildFibers() {
+    var rnd = rng(11);
+    var srcCols = [], bornCols = [];
+    tables.forEach(function (t) {
+      t.columns.forEach(function (c) {
+        if (t.layer === "source") { if ((model.colDown[c.id] || []).length) srcCols.push(c.id); }
+        else if (!(model.colUp[c.id] || []).length) bornCols.push(c.id);
+      });
+    });
+    var per = Math.max(10, Math.round(1500 / Math.max(1, srcCols.length)));
+    srcCols.forEach(function (c) { for (var k = 0; k < per; k++) fibers.push(makeFiber(walk(c, rnd), rnd, false)); });
+    bornCols.forEach(function (c) { for (var k = 0; k < 8; k++) fibers.push(makeFiber(walk(c, rnd), rnd, true)); });
+    // cross-sections: every fiber's position on every key pane, computed once
+    var NF = fibers.length;
+    SX = new Float32Array(NS * NF); SY = new Float32Array(NS * NF); SM = new Uint8Array(NS * NF);
+    for (var s = 0; s < NS; s++) {
+      var u = (s + 0.5) / NS; sliceU.push(u);
+      for (var i = 0; i < NF; i++) {
+        var j = s * NF + i;
+        if (fpos(fibers[i], u)) { SX[j] = OUT[0]; SY[j] = OUT[1]; SM[j] = OUT[2] ? 2 : 1; } else SM[j] = 0;
+      }
+    }
+    ORDER.forEach(function (l) {
+      var target = ZONE[l][0] + (ZONE[l][1] - ZONE[l][0]) * (l === "source" ? 0.9 : 0.72), best = 0;
+      sliceU.forEach(function (u, i) { if (Math.abs(u - target) < Math.abs(sliceU[best] - target)) best = i; });
+      LABEL[l] = best;
+      for (var i = 0; i < NS; i++) if (sliceU[i] >= ZONE[l][0]) { TITLE[l] = i; break; }
+    });
+    tables.forEach(function (t) { t.fiberCount = 0; });
+    fibers.forEach(function (f) { Object.keys(f.tables).forEach(function (id) { model.tableById[id].fiberCount++; }); });
+  }
+
+  // ------------------------------------------------------------ camera
+  function pose() {
+    var u = cam.u, camZ, pz, yaw = 0, pitch = 0;
+    if (u >= 0) { camZ = u * LZ - 1.2; pz = camZ + PIV; }
+    else {
+      var t = smooth(Math.min(1, -u));
+      camZ = -1.2 - t * LZ * 0.42; pz = (camZ + PIV) + (LZ * 0.5 - camZ - PIV) * t;
+      yaw = -1.05 * t; pitch = 0.42 * t;
+    }
+    yaw += cam.dyaw + cam.tx; pitch += cam.dpitch + cam.ty;
+    P.camZ = camZ; P.pz = pz; P.cy = Math.cos(yaw); P.sy = Math.sin(yaw); P.cp = Math.cos(pitch); P.sp = Math.sin(pitch);
+    P.F = Math.min(W, H, W / 1.3) * 0.95; P.px = cam.px; P.py = cam.py;
+  }
+  var PR = [0, 0, 0, 0];
+  function proj(x, y, z) {
+    x -= P.px; y -= P.py;
+    var dz = z - P.pz, x1 = x * P.cy + dz * P.sy, z1 = -x * P.sy + dz * P.cy;
+    var y1 = y * P.cp - z1 * P.sp, z2 = y * P.sp + z1 * P.cp, d = P.pz + z2 - P.camZ;
+    if (d < NEAR) return false;
+    var s = P.F / d; PR[0] = W / 2 + x1 * s; PR[1] = H / 2 + y1 * s; PR[2] = s; PR[3] = d;
+    return true;
+  }
+  function quad(x0, y0, x1, y1, z, out) {
+    if (!proj(x0, y0, z)) return false; out[0] = PR[0]; out[1] = PR[1];
+    if (!proj(x1, y0, z)) return false; out[2] = PR[0]; out[3] = PR[1];
+    if (!proj(x1, y1, z)) return false; out[4] = PR[0]; out[5] = PR[1];
+    if (!proj(x0, y1, z)) return false; out[6] = PR[0]; out[7] = PR[1];
+    out[8] = PR[2]; out[9] = PR[3];
+    return true;
+  }
+  function pathQuad(q) { ctx.moveTo(q[0], q[1]); ctx.lineTo(q[2], q[3]); ctx.lineTo(q[4], q[5]); ctx.lineTo(q[6], q[7]); ctx.closePath(); }
+  function focusU() { return (P.camZ + PIV) / LZ; }
+
+  // ------------------------------------------------------------ drawing
+  var Q = new Float64Array(10);
+  function colorAt(u) {
+    var l = zoneAt(u);
+    if (l !== "source") return LC[l];
+    return d3.interpolateRgb(SAND, LC.source)(Math.max(0, (u - 0.05) / 0.1));
+  }
+  function drawPanes() {
+    // thousands of faint frames, batched by layer and brightness
+    var buckets = {};
+    var bnd = {}; ORDER.forEach(function (l) { bnd[Math.round(ZONE[l][0] * NP)] = l; });
+    for (var p = 0; p < NP; p++) {
+      var u = (p + 0.5) / NP, z = u * LZ, l = zoneAt(u);
+      if (!quad(-HX, -HY, HX, HY, z, Q)) continue;
+      var d = Q[9]; if (d > FAR) continue;
+      var a = (P.camZ < 0 ? 0.05 : 0.07) * Math.min(1, 6 / d);
+      if (bnd[p]) a = 0.55;
+      else if (p % 16 === 8) a *= 2.4;
+      var lv = Math.min(9, Math.round(a * 60));
+      if (lv < 1) continue;
+      var key = l + ":" + lv;
+      (buckets[key] = buckets[key] || []).push(Q.slice(0, 8));
+    }
+    ctx.lineWidth = 1;
+    Object.keys(buckets).forEach(function (k) {
+      var parts = k.split(":");
+      ctx.strokeStyle = parts[0] === "source" ? SAND : LC[parts[0]];
+      ctx.globalAlpha = Math.min(0.6, +parts[1] / 60);
+      ctx.beginPath(); buckets[k].forEach(pathQuad); ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  }
+  function visibleSlices() {
+    var out = [];
+    for (var s = 0; s < NS; s++) {
+      var u = sliceU[s];
+      if (!proj(0, 0, u * LZ)) continue;
+      if (PR[3] > FAR) continue;
+      out.push({ s: s, u: u, d: PR[3] });
+    }
+    out.sort(function (a, b) { return b.d - a.d; });
+    return out;
+  }
+  function drawSlice(v, stride, selSet) {
+    var s = v.s, u = v.u, z = u * LZ, l = zoneAt(u), col = colorAt(u), NF = fibers.length;
+    var near = Math.min(1, 5 / v.d), close = Math.max(0, Math.min(1, (v.d - 0.35) / 0.9));
+    if (close <= 0) return;
+    
+    // faint glass on each key pane
+    if (quad(-HX, -HY, HX, HY, z, Q)) {
+      ctx.globalAlpha = close * ((P.camZ < 0 ? 0.012 : 0.004) + 0.008 * near); ctx.fillStyle = col; ctx.beginPath(); pathQuad(Q); ctx.fill();
+    }
+    // table outlines once grains have settled in this band
+    var su = settleU(l), z0 = ZONE[l][0], z1 = ZONE[l][1];
+    if (l !== "source" ? u >= su - 0.02 : u >= z0 + (z1 - z0) * 0.6) {
+      var ramp = Math.min(1, (u - (su - 0.02)) / 0.04), isLabel = s === LABEL[l];
+      if (l === "gold" || l === "semantic") drawLinks(l, z, close * (isLabel ? 0.75 : 0.12) * ramp * (0.4 + 0.6 * near));
+      tables.forEach(function (t) {
+        if (t.layer !== l) return;
+        var r = rects[t.id];
+        if (!quad(r.x, r.y, r.x + r.w, r.y + r.h, z, Q)) return;
+        var hot = (sel && sel.id === t.id) || (hover && hover.id === t.id);
+        var dim = selSet && !selSet.tables[t.id];
+        var a = (isLabel ? 0.8 : 0.16) * ramp * (0.35 + 0.65 * near) * (dim ? 0.25 : 1) * (hot ? 1.6 : 1);
+        ctx.globalAlpha = close * Math.min(1, a); ctx.strokeStyle = col;
+        ctx.lineWidth = (t.kind === "fact" || t.kind === "measure-table") ? 1.8 : 1;
+        ctx.beginPath(); pathQuad(Q); ctx.stroke();
+        if (isLabel && l === "report") drawTiles(t, r, z, col, close * Math.min(1, a));
+        if (isLabel && (t.kind === "fact" || t.kind === "measure-table")) { ctx.globalAlpha = close * Math.min(1, a) * 0.12; ctx.fillStyle = col; ctx.fill(); }
+        if (isLabel) {
+          var px = Math.hypot(Q[2] - Q[0], Q[3] - Q[1]);
+          if (px > 46) {
+            var fs = Math.max(9, Math.min(15, Q[8] * 0.05));
+            ctx.globalAlpha = close * Math.min(1, (dim ? 0.3 : 0.95) * near * 1.3);
+            ctx.fillStyle = "#f2f5f8"; ctx.font = (t.kind === "fact" || t.kind === "measure-table" ? "650 " : "500 ") + fs + "px Inter, sans-serif";
+            ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+            ctx.fillText(DML.tableLabel(t), Q[0] + 1, Q[1] - 3);
+          }
+        }
+      });
+    }
+    // the zone title, on the first pane of each band
+    if (s === TITLE[l] && proj(-HX + 0.05, -HY + 0.05, z)) {
+      var fs2 = Math.max(10, Math.min(46, PR[2] * 0.09));
+      ctx.globalAlpha = close * Math.min(0.9, 0.25 + near); ctx.fillStyle = l === "source" ? SAND : LC[l];
+      ctx.font = "700 " + fs2 + "px Inter, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(model.layerById[l].name.toUpperCase() + "  ·  " + STAGE[l].verb, PR[0], PR[1]);
+    }
+    // the cross-section itself: one dot per grain present at this depth
+    var base = s * NF, sz = Math.max(0.9, Math.min(2.6, v.d > 0 ? P.F / v.d * 0.0085 : 1));
+    var X0 = P.px, Y0 = P.py, dz = z - P.pz, cy = P.cy, sy = P.sy, cp = P.cp, sp = P.sp, F = P.F, hw = W / 2, hh = H / 2, cz = P.pz - P.camZ;
+    var passes = selSet ? [0, 1] : [1];
+    passes.forEach(function (pass) {
+      ctx.fillStyle = col;
+      ctx.globalAlpha = close * (pass === 0 ? 0.06 : Math.min(1, 0.22 + 0.7 * near));
+      var st = pass === 0 ? stride * 3 : stride;
+      for (var i = (s * 7) % st; i < NF; i += st) {
+        var m = SM[base + i]; if (!m) continue;
+        if (selSet) { var inSel = selSet.fib[i] === 1; if ((pass === 1) !== inSel) continue; }
+        var x = SX[base + i] - X0, y = SY[base + i] - Y0;
+        var x1 = x * cy + dz * sy, z1 = -x * sy + dz * cy, y1 = y * cp - z1 * sp, d = cz + y * sp + z1 * cp;
+        if (d < NEAR) continue;
+        var k = F / d, w = m === 2 ? sz * 1.35 : sz;
+        ctx.fillRect(hw + x1 * k - w / 2, hh + y1 * k - w / 2, w, w);
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+  function drawTiles(t, r, z, col, a) {
+    t.columns.forEach(function (c, j) {
+      var x = r.x + 0.03 + (j % r.nc) * r.cw + 0.012, y = r.y + 0.08 + Math.floor(j / r.nc) * r.ch + 0.012;
+      if (!quad(x, y, x + r.cw - 0.024, y + r.ch - 0.024, z, Q)) return;
+      ctx.globalAlpha = a * 0.7; ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); pathQuad(Q); ctx.stroke();
+      ctx.globalAlpha = a * 0.07; ctx.fillStyle = col; ctx.fill();
+      var px = Math.hypot(Q[2] - Q[0], Q[3] - Q[1]);
+      if (px > 70) {
+        ctx.globalAlpha = Math.min(1, a * 1.2); ctx.fillStyle = "#e9f2ef";
+        ctx.font = "500 " + Math.max(9, Math.min(12, Q[8] * 0.03)) + "px Inter, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+        ctx.fillText(c.name.length > 26 ? c.name.slice(0, 25) + "…" : c.name, Q[0] + 4, Q[1] + 3);
+      }
+    });
+  }
+  function drawLinks(l, z, a) {
+    if (a < 0.01) return;
+    ctx.globalAlpha = a; ctx.strokeStyle = LC[l]; ctx.lineWidth = 1;
+    links[l].forEach(function (k) {
+      var ra = rects[k.source], rb = rects[k.target];
+      if (!ra || !rb) return;
+      if (!proj(ra.x + ra.w / 2, ra.y + ra.h / 2, z)) return; var ax = PR[0], ay = PR[1];
+      if (!proj(rb.x + rb.w / 2, rb.y + rb.h / 2, z)) return;
+      ctx.setLineDash(k.kind === "feeds" ? [3, 4] : (k.active === false ? [6, 4] : []));
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(PR[0], PR[1]); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+  function drawPulses() {
+    ctx.globalCompositeOperation = "lighter";
+    pulses.forEach(function (p) {
+      var f = fibers[p.fi], dim = sel && !f.tables[sel.id];
+      var c = colorAt(p.u), prevX = null, prevY = null;
+      for (var k = 7; k >= 0; k--) {
+        var uu = p.u - k * 0.0032;
+        if (!fpos(f, uu) || !proj(OUT[0], OUT[1], uu * LZ)) { prevX = null; continue; }
+        if (prevX !== null) {
+          ctx.globalAlpha = (dim ? 0.15 : 0.85) * (1 - k / 8);
+          ctx.strokeStyle = c; ctx.lineWidth = Math.max(0.8, Math.min(2.2, PR[2] * 0.008));
+          ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(PR[0], PR[1]); ctx.stroke();
+        }
+        prevX = PR[0]; prevY = PR[1];
+      }
+      if (prevX !== null) {
+        var r = Math.max(1.3, Math.min(4.2, PR[2] * 0.014)) * (p === follow ? 1.8 : 1), fade = Math.min(1, (PR[3] - NEAR) / 1.2);
+        ctx.globalAlpha = (dim ? 0.12 : 0.28) * fade; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(prevX, prevY, r * 2.4, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = (dim ? 0.3 : 1) * fade; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(prevX, prevY, r * 0.7, 0, 6.2832); ctx.fill();
+      }
+    });
+    sparks.forEach(function (s) {
+      if (!proj(s.x, s.y, s.z)) return;
+      var r = PR[2] * 0.05 * (0.3 + s.t * 1.6);
+      ctx.globalAlpha = Math.max(0, 0.9 - s.t * 0.9); ctx.strokeStyle = s.c; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(PR[0], PR[1], r, 0, 6.2832); ctx.stroke();
+    });
+    ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+  }
+  function draw() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    pose();
+    drawPanes();
+    var vs = visibleSlices();
+    var wsum = 0; vs.forEach(function (v) { v.w = 1 / Math.max(1.5, v.d); wsum += v.w; });
+    var selSet = sel ? sel.set : null;
+    vs.forEach(function (v) { drawSlice(v, Math.max(1, Math.ceil(fibers.length / (34000 * v.w / wsum))), selSet); });
+    drawPulses();
+    hud();
+  }
+
+  // ------------------------------------------------------------ motion
+  function spawn(fi, u) {
+    var f = fibers[fi];
+    pulses.push({ fi: fi, u: u == null ? f.start : u, sp: 0.8 + Math.random() * 0.5, ev: 0 });
+  }
+  function pickFiber() {
+    if (sel) return sel.list[Math.floor(Math.random() * sel.list.length)];
+    return Math.floor(Math.random() * fibers.length);
+  }
+  function step(dt) {
+    T += dt;
+    var target = reduceMotion ? 0 : Math.round(220 * Math.min(1.5, 0.4 + flow * 0.6));
+    var tries = 0;
+    while (pulses.length < target && tries++ < 6) spawn(pickFiber());
+    for (var i = pulses.length - 1; i >= 0; i--) {
+      var p = pulses[i], f = fibers[p.fi];
+      p.u += dt * flow * 0.042 * p.sp;
+      while (p.ev < f.events.length && p.u >= f.events[p.ev][0]) {
+        var e = f.events[p.ev];
+        if (!QUIET[e[1]]) {
+          stats.transforms++;
+          var cp = colPos[e[2]];
+          if (sparks.length < 160) sparks.push({ x: cp[0], y: cp[1], z: e[0] * LZ, t: 0, c: LC[layerOfCol(e[2])] });
+        }
+        p.ev++;
+      }
+      if (p.u > f.end) {
+        if (layerOfCol(f.chain[f.chain.length - 1].c) === "report") stats.arrivals++;
+        if (p === follow) stopFollow(true);
+        pulses.splice(i, 1);
+      }
+    }
+    for (var j = sparks.length - 1; j >= 0; j--) { sparks[j].t += dt * 1.4; if (sparks[j].t > 1) sparks.splice(j, 1); }
+    if (flying && !follow) { cam.ut += dt * 0.022; if (cam.ut > 1.0) { cam.ut = -0.62; cam.dyaw = 0; cam.dpitch = 0; } }
+    if (follow) {
+      if (fpos(fibers[follow.fi], follow.u)) { cam.ppx = OUT[0] * 0.8; cam.ppy = OUT[1] * 0.8; }
+      cam.ut = follow.u - 1.9 / LZ; cam.dyaw *= 0.95; cam.dpitch *= 0.95;
+      renderJournal();
+    } else { cam.ppx *= 0.96; cam.ppy *= 0.96; }
+  }
+  function ease(dt) {
+    var k = reduceMotion ? 1 : Math.min(1, dt * 3.2);
+    cam.u += (cam.ut - cam.u) * k;
+    cam.tx += (cam.ttx - cam.tx) * Math.min(1, dt * 4); cam.ty += (cam.tty - cam.ty) * Math.min(1, dt * 4);
+    cam.px += (cam.ppx - cam.px) * Math.min(1, dt * 3); cam.py += (cam.ppy - cam.py) * Math.min(1, dt * 3);
+  }
+  function frame(now) {
+    var dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016; last = now;
+    if (!paused) step(dt);
+    ease(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ------------------------------------------------------------ HUD and panel
+  var hudState = "";
+  function hud() {
+    var fu = focusU(), zone = fu < 0 ? null : zoneAt(Math.min(0.9999, fu));
+    var paneNo = fu < 0 ? "Outside" : (fu > 1 ? "Through" : "Pane " + d3.format(",")(Math.max(1, Math.round(fu * NP))));
+    var key = paneNo + (zone || "") + (cam.u < -0.05 ? "o" : "");
+    if (key !== hudState) {
+      hudState = key;
+      document.getElementById("paneNo").textContent = paneNo;
+      document.getElementById("zoneName").textContent = cam.u < -0.05 ? "the whole stack, " + d3.format(",")(NP) + " panes" : (zone ? model.layerById[zone].name + " · " + STAGE[zone].verb.toLowerCase() : "past the last pane");
+      d3.selectAll("#rail button").classed("on", function () { return this.dataset.l === (cam.u < -0.05 ? "" : zone); });
+    }
+    if ((T * 4 | 0) !== hud.t) {
+      hud.t = T * 4 | 0;
+      document.getElementById("stats").innerHTML = "grains <b>" + d3.format(",")(fibers.length) + "</b> · in flight <b>" + pulses.length + "</b><br>transforms <b>" + d3.format(",")(stats.transforms) + "</b> · answers <b>" + d3.format(",")(stats.arrivals) + "</b>";
+    }
+  }
+  function renderDefault() {
+    var h = '<p class="eyebrow">The stack</p><h3>' + DML.esc(model.model.name) + "</h3>";
+    h += "<p>" + d3.format(",")(NP) + " panes, " + tables.length + " tables and " + d3.format(",")(fibers.length) + " grains, each following real column lineage from the shared sample model.</p>";
+    h += '<ul class="stages">' + ORDER.map(function (l) {
+      return '<li><span class="dot" style="background:' + (l === "source" ? SAND : LC[l]) + '"></span><b>' + STAGE[l].verb + "</b> · " + DML.esc(model.layerById[l].name) + ". " + DML.esc(STAGE[l].what) + "</li>";
+    }).join("") + "</ul>";
+    h += '<p class="muted">Try: Fly through, then Pull back and Send a load. Click a table on any pane to see only the grains that pass through it.</p>';
+    panel.innerHTML = h;
+  }
+  function selectTable(t) {
+    if (!t || (sel && sel.id === t.id)) { sel = null; if (!follow) renderDefault(); return; }
+    var fib = new Uint8Array(fibers.length), list = [], tset = {};
+    fibers.forEach(function (f, i) { if (f.tables[t.id]) { fib[i] = 1; list.push(i); Object.keys(f.tables).forEach(function (k) { tset[k] = 1; }); } });
+    sel = { id: t.id, t: t, set: { fib: fib, tables: tset }, list: list.length ? list : [0] };
+    stopFollow(false);
+    var srcs = Object.keys(tset).filter(function (k) { return model.tableById[k].layer === "source"; }).length;
+    var reps = 0; list.forEach(function (i) { var c = fibers[i].chain[fibers[i].chain.length - 1].c; if (layerOfCol(c) === "report") reps++; });
+    var h = DML.tablePanel(model, t);
+    h = '<p class="muted" style="margin-top:0">' + d3.format(",")(list.length) + " grains pass through this table, drawn from " + srcs + " source table" + (srcs === 1 ? "" : "s") + ". " + (reps ? d3.format(",")(reps) + " of them reach a report visual." : "None of them reach a report visual.") + ' Everything else on the panes is dimmed. Click it again or press Escape to clear.</p>' + h;
+    panel.innerHTML = h;
+  }
+  function startFollow() {
+    var cands = [];
+    fibers.forEach(function (f, i) { if (f.len >= 5 && layerOfCol(f.chain[f.chain.length - 1].c) === "report" && (!sel || f.tables[sel.id])) cands.push(i); });
+    if (!cands.length) fibers.forEach(function (f, i) { if (f.len >= 4) cands.push(i); });
+    var fi = cands[Math.floor(Math.random() * cands.length)];
+    var p = { fi: fi, u: fibers[fi].start + 0.001, sp: 1, ev: 0 };
+    pulses.push(p); follow = p; lastJournal = -1; flying = false; syncButtons();
+    document.getElementById("followtag").classList.add("on");
+    renderJournal();
+  }
+  function stopFollow(arrived) {
+    if (!follow) return;
+    if (arrived) { follow.u = 9; renderJournal(true); }
+    follow = null;
+    document.getElementById("followtag").classList.remove("on");
+    syncButtons();
+  }
+  function renderJournal(done) {
+    var p = follow; if (!p) return;
+    var f = fibers[p.fi], passed = 0;
+    f.chain.forEach(function (n) { if (p.u >= n.u - 0.0005) passed++; });
+    if (passed === lastJournal && !done) return;
+    lastJournal = passed;
+    var startC = model.columnById[f.chain[0].c];
+    var h = '<p class="eyebrow">Grain journal</p><h3>One value, start to finish</h3>';
+    h += "<p>" + (f.born ? "Made mid-stack in <code>" + DML.esc(startC.col.name) + "</code>, not copied from a source." : "Started as a loose speck of sand that settled into <code>" + DML.esc(DML.tableLabel(startC.table) + "." + startC.col.name) + "</code>.") + " Each stop is a column it lands in, with the transform that carried it there.</p>";
+    h += '<ol class="journal">' + f.chain.map(function (n, i) {
+      var c = model.columnById[n.c], l = c.table.layer;
+      return '<li style="--c:' + (l === "source" ? SAND : LC[l]) + '"' + (i < passed ? "" : ' class="is-ahead"') + "><code>" + DML.esc(DML.tableLabel(c.table) + "." + c.col.name) + '</code><span class="tx">' + DML.esc(model.layerById[l].name) + (n.tx ? " · " + DML.esc(n.tx) : "") + "</span></li>";
+    }).join("") + "</ol>";
+    if (done) h += "<p><b>Arrived.</b> Follow another grain or click a table to trace it.</p>";
+    panel.innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ interaction
+  function hitTest(mx, my) {
+    var best = null, bd = 1e9, inside = function (q) {
+      var s = 0;
+      for (var i = 0; i < 4; i++) {
+        var ax = q[i * 2], ay = q[i * 2 + 1], bx = q[(i * 2 + 2) % 8], by = q[(i * 2 + 3) % 8];
+        var c = (bx - ax) * (my - ay) - (by - ay) * (mx - ax);
+        if (c !== 0) { if (s === 0) s = Math.sign(c); else if (Math.sign(c) !== s) return false; }
+      }
+      return true;
+    };
+    tables.forEach(function (t) {
+      var r = rects[t.id], u = labelU(t.layer);
+      if (!quad(r.x, r.y, r.x + r.w, r.y + r.h, u * LZ, Q)) return;
+      if (Q[9] > 40) return;
+      if (inside(Q) && Q[9] < bd) { bd = Q[9]; best = t; }
+    });
+    return best;
+  }
+  var drag = null;
+  // ---- touch: one finger swipes (up/down flies, sideways turns), two fingers pinch to fly and tilt
+  var touches = {}, tg = null, fling = 0, tipTimer = 0;
+  function clampU(u) { return Math.max(-1, Math.min(1, u)); }
+  function flyRate() { return cam.u < 0 ? 0.0014 : 0.0005; }
+  function touchList() { return Object.keys(touches).map(function (k) { return touches[k]; }); }
+  function gestureStart() {
+    var p = touchList();
+    if (p.length === 1) tg = { n: 1, x: p[0].x, y: p[0].y, x0: p[0].x, y0: p[0].y, axis: null, yaw: cam.dyaw, t: performance.now(), moved: false };
+    else if (p.length >= 2) {
+      var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+      tg = { n: 2, d: d, my: (p[0].y + p[1].y) / 2, pitch: cam.dpitch, moved: true };
+      stopAuto(); DML.tip.hide();
+    }
+  }
+  function stopAuto() { if (follow) stopFollow(false); if (flying) { flying = false; syncButtons(); } }
+  function onTouchMove() {
+    var p = touchList(); if (!tg) return;
+    if (tg.n === 1 && p.length === 1) {
+      var dx = p[0].x - tg.x0, dy = p[0].y - tg.y0;
+      if (!tg.axis && Math.abs(dx) + Math.abs(dy) > 10) { tg.axis = Math.abs(dy) >= Math.abs(dx) ? "fly" : "turn"; tg.moved = true; stopAuto(); DML.tip.hide(); }
+      if (tg.axis === "fly") {
+        var now = performance.now(), step = -(p[0].y - tg.y) * flyRate();
+        cam.ut = clampU(cam.ut + step);
+        var dtm = Math.max(8, now - tg.t); fling = fling * 0.5 + (step / dtm * 16) * 0.5; tg.t = now;
+      } else if (tg.axis === "turn") {
+        cam.dyaw = Math.max(-1.3, Math.min(1.3, tg.yaw + dx * 0.006));
+      }
+      tg.x = p[0].x; tg.y = p[0].y;
+    } else if (tg.n === 2 && p.length >= 2) {
+      var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), my = (p[0].y + p[1].y) / 2;
+      cam.ut = clampU(cam.ut + (d - tg.d) * flyRate() * 1.6); tg.d = d;
+      cam.dpitch = Math.max(-0.9, Math.min(0.9, tg.pitch + (my - tg.my) * 0.004));
+    }
+  }
+  function tapAt(e) {
+    var b = cv.getBoundingClientRect(), t = hitTest(e.clientX - b.left, e.clientY - b.top);
+    if (t) {
+      selectTable(t);
+      var below = window.matchMedia("(max-width: 1000px)").matches;
+      DML.tip.show("<b>" + DML.esc(DML.tableLabel(t)) + "</b><br>" + d3.format(",")(t.fiberCount) + " grains pass through" + (below && !stage.classList.contains("is-max") ? "<br>Details below the stack" : ""), e);
+      clearTimeout(tipTimer); tipTimer = setTimeout(function () { DML.tip.hide(); }, 2600);
+    } else if (sel) { selectTable(null); DML.tip.hide(); }
+  }
+  (function flingLoop() {
+    if (fling && !tg) { cam.ut = clampU(cam.ut + fling); fling *= 0.9; if (Math.abs(fling) < 0.00004) fling = 0; }
+    requestAnimationFrame(flingLoop);
+  })();
+
+  cv.addEventListener("pointerdown", function (e) {
+    if (e.pointerType === "touch") {
+      e.preventDefault(); fling = 0;
+      touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+      cv.setPointerCapture(e.pointerId);
+      gestureStart();
+      return;
+    }
+    drag = { x: e.clientX, y: e.clientY, moved: false, yaw: cam.dyaw, pitch: cam.dpitch };
+    cv.setPointerCapture(e.pointerId);
+  });
+  function touchEnd(e) {
+    if (!touches[e.pointerId]) return;
+    var wasTap = tg && tg.n === 1 && !tg.moved && e.type === "pointerup";
+    delete touches[e.pointerId];
+    if (wasTap) tapAt(e);
+    if (Object.keys(touches).length) { gestureStart(); fling = 0; } else tg = null;
+  }
+  cv.addEventListener("pointercancel", function (e) { if (e.pointerType === "touch") touchEnd(e); drag = null; });
+  cv.addEventListener("pointermove", function (e) {
+    if (e.pointerType === "touch") {
+      if (touches[e.pointerId]) { touches[e.pointerId].x = e.clientX; touches[e.pointerId].y = e.clientY; onTouchMove(); }
+      return;
+    }
+    var b = cv.getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+    cam.ttx = (mx / W - 0.5) * 0.34; cam.tty = (my / H - 0.5) * 0.24;
+    if (drag) {
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; stage.classList.add("is-grab"); if (follow) stopFollow(false); }
+      if (drag.moved) { cam.dyaw = Math.max(-1.3, Math.min(1.3, drag.yaw + dx * 0.005)); cam.dpitch = Math.max(-0.9, Math.min(0.9, drag.pitch + dy * 0.004)); }
+      DML.tip.hide();
+      return;
+    }
+    var t = hitTest(mx, my);
+    hover = t; stage.classList.toggle("is-hot", !!t);
+    if (t) DML.tip.show("<b>" + DML.esc(DML.tableLabel(t)) + "</b><br>" + DML.esc(model.layerById[t.layer].name) + " · " + DML.esc(t.kind) + " · " + t.columns.length + " columns<br>" + d3.format(",")(t.fiberCount) + " grains pass through", e);
+    else DML.tip.hide();
+  });
+  cv.addEventListener("pointerup", function (e) {
+    if (e.pointerType === "touch") { touchEnd(e); return; }
+    if (drag && !drag.moved) {
+      var b = cv.getBoundingClientRect(), t = hitTest(e.clientX - b.left, e.clientY - b.top);
+      if (t) selectTable(t); else if (sel) selectTable(null);
+    }
+    drag = null; stage.classList.remove("is-grab");
+  });
+  cv.addEventListener("pointerleave", function (e) { if (e.pointerType === "touch") return; hover = null; cam.ttx = 0; cam.tty = 0; DML.tip.hide(); });
+  cv.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    if (follow) stopFollow(false);
+    flying = false; syncButtons();
+    var k = e.deltaMode === 1 ? 16 : 1;
+    cam.ut = Math.max(-1, Math.min(1, cam.ut + e.deltaY * k * (cam.ut < 0 ? 0.0011 : 0.00045)));
+  }, { passive: false });
+  stage.addEventListener("keydown", function (e) {
+    var k = e.key;
+    if (k === "ArrowUp" || k === "w") { cam.ut = Math.min(1, cam.ut + 0.02); e.preventDefault(); }
+    else if (k === "ArrowDown" || k === "s") { cam.ut = Math.max(-1, cam.ut - 0.02); e.preventDefault(); }
+    else if (k === "0") overview();
+    else if (k >= "1" && k <= "6") dive(ORDER[+k - 1]);
+    else if (k === " ") { togglePause(); e.preventDefault(); }
+    else if (k === "Escape") { selectTable(null); stopFollow(false); if (stage.classList.contains("is-max")) setMax(false); }
+  });
+  function dive(l) {
+    stopFollow(false); flying = false; syncButtons();
+    cam.ut = Math.max(0.004, labelU(l) - 0.9 / LZ); cam.dyaw = 0; cam.dpitch = 0; cam.ppx = 0; cam.ppy = 0;
+  }
+  function overview() { stopFollow(false); flying = false; syncButtons(); cam.ut = -0.62; cam.dyaw = 0; cam.dpitch = 0; cam.ppx = 0; cam.ppy = 0; }
+  function togglePause() { paused = !paused; syncButtons(); }
+  function syncButtons() {
+    var fb = document.getElementById("fly"); fb.textContent = flying ? "Stop flying" : "Fly through"; fb.classList.toggle("is-on", flying);
+    document.getElementById("pause").textContent = paused ? "Play" : "Pause";
+    document.getElementById("follow").textContent = follow ? "Let go" : "Follow a grain";
+  }
+  document.getElementById("fly").addEventListener("click", function () {
+    stopFollow(false); flying = !flying;
+    if (flying && cam.ut > 0.95) cam.ut = -0.62;
+    if (flying) { cam.dyaw *= 0.3; cam.dpitch *= 0.3; }
+    syncButtons();
+  });
+  document.getElementById("pump").addEventListener("click", function () {
+    var pool = sel ? sel.list : d3.range(fibers.length);
+    var n = Math.min(pool.length, 420);
+    d3.shuffle(pool.slice()).slice(0, n).forEach(function (fi) { var f = fibers[fi]; if (!f.born) spawn(fi, 0); else spawn(fi); });
+    if (paused) { paused = false; syncButtons(); }
+  });
+  document.getElementById("follow").addEventListener("click", function () { if (follow) stopFollow(false); else startFollow(); });
+  document.getElementById("pause").addEventListener("click", togglePause);
+  document.getElementById("overview").addEventListener("click", overview);
+  document.getElementById("speed").addEventListener("input", function () { flow = +this.value; });
+  function setMax(on) {
+    stage.classList.toggle("is-max", on); document.body.classList.toggle("syn-lock", on);
+    document.getElementById("full").textContent = on ? "Exit full screen" : "Full screen";
+    resize();
+  }
+  document.getElementById("full").addEventListener("click", function () {
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    if (document.webkitFullscreenElement) { document.webkitExitFullscreen(); return; }
+    if (stage.classList.contains("is-max")) { setMax(false); return; }
+    var req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+    if (req) {
+      var r = req.call(stage);
+      if (r && r.catch) r.catch(function () { setMax(true); });
+    } else setMax(true);
+  });
+  document.getElementById("unmax").addEventListener("click", function () { setMax(false); });
+
+  function resize() {
+    var b = stage.getBoundingClientRect();
+    W = Math.max(300, b.width); H = Math.max(300, b.height);
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  }
+
+  // ------------------------------------------------------------ boot
+  DML.load("../data/sample-model.json").then(function (m) {
+    model = m; tables = m.tables;
+    ORDER.forEach(function (l) { LC[l] = DML.layerColor(l); });
+    layout();
+    buildFibers();
+    // rail and band table
+    var rail = d3.select("#rail");
+    rail.append("li").append("button").attr("type", "button").attr("data-l", "").html('<span class="sw" style="background:#5b6878;color:#5b6878"></span><b>Whole stack</b><small>pull back</small>').on("click", overview);
+    ORDER.forEach(function (l, i) {
+      var c = l === "source" ? SAND : LC[l];
+      rail.append("li").append("button").attr("type", "button").attr("data-l", l).attr("title", "Key " + (i + 1))
+        .style("color", c)
+        .html('<span class="sw" style="background:' + c + '"></span><b style="color:#eef2f6">' + STAGE[l].verb + "</b><small>" + DML.esc(m.layerById[l].name) + "</small>")
+        .on("click", function () { dive(l); });
+    });
+    document.getElementById("bandtable").innerHTML = ORDER.map(function (l) {
+      return "<tr><td><b>" + STAGE[l].verb + '</b><br><span class="muted">panes ' + d3.format(",")(Math.round(ZONE[l][0] * NP) + 1) + "–" + d3.format(",")(Math.round(ZONE[l][1] * NP)) + '</span></td><td><span class="chip chip--' + l + '">' + l + "</span></td><td>" + DML.esc(STAGE[l].what) + "</td></tr>";
+    }).join("");
+    renderDefault();
+    resize();
+    if (window.ResizeObserver) new ResizeObserver(resize).observe(stage); else window.addEventListener("resize", resize);
+    if (reduceMotion) { paused = true; syncButtons(); }
+    requestAnimationFrame(frame);
+  });
+})();
+</script>
+</body>
+</html>

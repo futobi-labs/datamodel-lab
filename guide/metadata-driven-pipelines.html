@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="metadata-driven-pipelines">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metadata-driven pipelines · Data Model Lab</title>
+<meta name="description" content="Config tables, watermark incremental loads, ForEach over config in Fabric Data Pipelines, logging, idempotent reruns, schema drift, and when metadata-driven becomes too clever.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 08</p>
+    <h1>Metadata-driven pipelines</h1>
+    <p class="lede">When the hundredth table looks like the first, stop writing pipelines and start writing rows. A control table and one parameterized pipeline can load most of bronze and silver, as long as you know where the pattern should stop.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>The idea</h2>
+<p>A metadata-driven pipeline separates <em>how</em> data moves (generic, written once) from <em>what</em> moves (one row per table in a control table). The pipeline reads the control table, loops over the active rows, and for each one extracts, lands, logs and advances a watermark. Onboarding a new source table becomes an insert, not a deployment.</p>
+<p>The pattern fits movement work very well: landing bronze, standard merges into silver, full reloads of small reference tables. It fits modeling work badly, which is the subject of the last section.</p>
+
+<h2>The control table</h2>
+<p>Keep the control table small and boring. Every column should be something the generic pipeline actually reads.</p>
+<pre><code class="language-sql">CREATE TABLE meta.load_config (
+    config_id         int           NOT NULL,
+    source_system     varchar(50)   NOT NULL,  -- 'erp', 'crm', 'files'
+    source_object     varchar(200)  NOT NULL,  -- 'sales_order_line'
+    target_layer      varchar(10)   NOT NULL,  -- 'bronze' or 'silver'
+    target_table      varchar(200)  NOT NULL,  -- 'bronze.erp_sales_order_line'
+    load_type         varchar(12)   NOT NULL,  -- 'full' or 'incremental'
+    watermark_column  varchar(128)  NULL,      -- 'modified_at'
+    last_watermark    datetime2(6)  NULL,
+    merge_keys        varchar(400)  NULL,      -- 'order_number,line_number'
+    load_order        int           NOT NULL,  -- wave number: lower loads first
+    is_active         bit           NOT NULL
+);
+
+ALTER TABLE meta.load_config
+    ADD CONSTRAINT pk_load_config PRIMARY KEY NONCLUSTERED (config_id) NOT ENFORCED;</code></pre>
+<p>Fabric Warehouse uses <code>varchar</code> (with UTF-8 collations) rather than <code>nvarchar</code>, caps <code>datetime2</code> at precision 6, and accepts primary keys only as <code>NONCLUSTERED ... NOT ENFORCED</code>, so uniqueness of <code>config_id</code> is your job. For the sample model the rows look like this:</p>
+<table>
+<thead><tr><th>source_system</th><th>source_object</th><th>load_type</th><th>watermark_column</th><th>merge_keys</th><th>load_order</th></tr></thead>
+<tbody>
+<tr><td>erp</td><td>customer</td><td>incremental</td><td>modified_at</td><td>customer_id</td><td>10</td></tr>
+<tr><td>erp</td><td>product</td><td>full</td><td></td><td>product_id</td><td>10</td></tr>
+<tr><td>erp</td><td>warehouse</td><td>full</td><td></td><td>warehouse_id</td><td>10</td></tr>
+<tr><td>crm</td><td>salesperson</td><td>full</td><td></td><td>salesperson_id</td><td>10</td></tr>
+<tr><td>erp</td><td>sales_order_header</td><td>incremental</td><td>modified_at</td><td>order_number</td><td>20</td></tr>
+<tr><td>erp</td><td>sales_order_line</td><td>incremental</td><td>modified_at</td><td>order_number,line_number</td><td>20</td></tr>
+<tr><td>erp</td><td>inventory_txn</td><td>incremental</td><td>txn_at</td><td>txn_id</td><td>20</td></tr>
+<tr><td>files</td><td>budget</td><td>full</td><td></td><td>year_month,category,region</td><td>30</td></tr>
+</tbody>
+</table>
+<p>Reasonable additions as needs appear: a source query override for awkward sources, a partition column for large extracts, an owner, and a notes column. Resist adding transformation SQL.</p>
+
+<h2>Incremental loads with a watermark</h2>
+<p>The watermark pattern has one rule that is easy to get wrong: capture the new high watermark <em>before</em> extracting, and bound the extract by it. Otherwise rows committed during the extract can be skipped forever.</p>
+<ol>
+<li>Read <code>last_watermark</code> from config.</li>
+<li>Query the source for the current maximum of the watermark column: that is <code>new_watermark</code>.</li>
+<li>Extract rows in the half-open window and land them in bronze with the run's <code>_batch_id</code>.</li>
+<li>Merge into silver on <code>merge_keys</code>.</li>
+<li>Only after everything succeeds, write <code>new_watermark</code> back to config.</li>
+</ol>
+<pre><code class="language-sql">-- Step 2: high watermark
+SELECT MAX(modified_at) AS new_watermark FROM erp.sales_order_line;
+
+-- Step 3: bounded extract
+SELECT *
+FROM erp.sales_order_line
+WHERE modified_at &gt;  @last_watermark
+  AND modified_at &lt;= @new_watermark;
+
+-- Step 5: advance, only on success
+UPDATE meta.load_config
+SET    last_watermark = @new_watermark
+WHERE  config_id = @config_id;</code></pre>
+<div class="callout callout--warn"><strong>Watch out</strong><p>Timestamp watermarks miss two things. Rows from long-running source transactions can commit with a <code>modified_at</code> earlier than a watermark you already advanced past; a small lookback overlap plus an idempotent merge handles it. And hard deletes never show up at all; you need source CDC, soft-delete flags, or a periodic full key reconciliation.</p></div>
+
+<h2>ForEach over config in Fabric Data Pipelines</h2>
+<p>The pipeline shape is: a Lookup activity reads the active config rows, a ForEach iterates them, and inside the loop a Copy activity (or a notebook) does the work, followed by logging and the watermark update.</p>
+<pre><code class="language-text">Lookup  "Get config"   query: SELECT * FROM meta.load_config
+                              WHERE is_active = 1 AND load_order = @{pipeline().parameters.wave}
+ForEach "Each table"   items: @activity('Get config').output.value
+  Lookup  "High watermark"
+  Copy    "Land bronze"  source query (dynamic content):
+            SELECT * FROM @{item().source_system}.@{item().source_object}
+            WHERE @{item().watermark_column} &gt;  '@{item().last_watermark}'
+              AND @{item().watermark_column} &lt;= '@{activity('High watermark').output.firstRow.new_watermark}'
+  Script  "Log and advance watermark"</code></pre>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>A few limits shape the design. The Lookup activity returns a bounded result (historically 5,000 rows and 4 MB), which is plenty for config but not for data. ForEach runs in parallel by default with a configurable batch count (up to 50) and does not respect <code>load_order</code>, so drive waves from an outer sequential loop that invokes a child pipeline per wave. ForEach cannot be nested directly; use an Invoke pipeline activity instead. Use a Switch activity on <code>load_type</code> rather than branching inside expressions. For lakehouse-to-lakehouse work, a single notebook that reads the config and loops in Python, possibly with a thread pool, often beats a ForEach that starts a Spark session per table. Pipelines stay the right tool for Copy from on-premises sources through a gateway.</p></div>
+
+<h2>Logging, idempotence and reruns</h2>
+<p>Every run writes one row per table to a log, keyed by the pipeline run ID, which is also the <code>_batch_id</code> stamped on every bronze row.</p>
+<pre><code class="language-sql">CREATE TABLE meta.load_log (
+    run_id          varchar(64)   NOT NULL,  -- @pipeline().RunId, also bronze _batch_id
+    config_id       int           NOT NULL,
+    started_at      datetime2(6)  NOT NULL,
+    ended_at        datetime2(6)  NULL,
+    status          varchar(12)   NOT NULL,  -- 'running', 'succeeded', 'failed'
+    rows_read       bigint        NULL,
+    rows_written    bigint        NULL,
+    watermark_from  datetime2(6)  NULL,
+    watermark_to    datetime2(6)  NULL,
+    error_message   varchar(4000) NULL
+);</code></pre>
+<p>Idempotence means running the same batch twice produces the same result as running it once. Three habits get you there: bronze loads delete any rows already landed for this <code>_batch_id</code> before inserting (or merge on it); silver loads merge on business keys instead of appending; and the watermark advances only after the whole chain for that table succeeds. With those in place, a failed night is fixed by rerunning, not by surgery.</p>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>Every load must be safe to run twice. If a rerun needs a manual cleanup step first, the load is not finished.</p></div>
+
+<h2>Schema drift</h2>
+<p>Sources add, drop and retype columns. Decide per layer how much drift you absorb:</p>
+<ul>
+<li><strong>Bronze absorbs additions.</strong> Land new columns automatically with Delta schema evolution, for example <code>df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable("bronze.erp_customer")</code>.</li>
+<li><strong>Silver uses explicit column lists.</strong> A new source column does not flow downstream until someone adds it on purpose. Removed columns fail loudly.</li>
+<li><strong>Type changes stop the load.</strong> Silently casting a changed type is how amounts lose decimals.</li>
+<li><strong>Detect drift deliberately.</strong> Compare each source's current schema with a registered column list (<code>meta.column_registry</code>) on every run, and alert on differences instead of discovering them in a report.</li>
+</ul>
+
+<h2>When metadata-driven gets too clever</h2>
+<p>The pattern decays in predictable ways. Watch for:</p>
+<ul>
+<li>Transformation SQL stored as strings in config rows.</li>
+<li>A growing set of special-case columns (<code>skip_dedupe</code>, <code>use_alt_key</code>, <code>is_special_7</code>).</li>
+<li>Pipeline expressions nobody can read without pasting them into an editor.</li>
+<li>A config table edited by hand in production and absent from source control.</li>
+<li>Debugging that starts with reconstructing the dynamic SQL a run actually executed.</li>
+</ul>
+<p>The fix is a boundary: <strong>metadata for movement, code for meaning.</strong> Bronze landing and standard silver merges are driven by config. Gold dimensions and facts are hand-written, reviewed SQL or notebooks, because each encodes modeling decisions (grain, SCD behavior, unknown members) that deserve a code review, not a row. Keep the config itself in Git, seeded by a deployment script, so a change to what loads is as visible as a change to how it loads.</p>
+<div class="callout callout--open"><strong>Open question</strong><p>Declarative transformation tools such as dbt generate the same lineage and dependency graph that control tables approximate. Is a config table still the right abstraction for silver once a declarative tool is available, or only for bronze landing?</p></div>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/lineage-flow.html">Lineage flow</a> shows the eight sample sources landing in bronze and flowing on to silver, which is exactly the part of the graph a control table drives.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>

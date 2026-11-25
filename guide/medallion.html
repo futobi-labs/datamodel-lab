@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-skin="testprint" data-root="../" data-section="guide" data-page="medallion">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medallion architecture · Data Model Lab</title>
+<meta name="description" content="Bronze, silver and gold as a division of responsibility: what each layer owns, what it must never do, and where the lines blur.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/site.css">
+<link rel="stylesheet" href="../assets/css/testprint.css">
+<script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div id="crumbs"></div>
+  <header class="page-head">
+    <p class="eyebrow">Field Guide · 01</p>
+    <h1>Medallion architecture</h1>
+    <p class="lede">Bronze, silver and gold are a division of responsibility, not a folder structure. Each layer makes one promise to the layer above it, and most medallion problems come from a layer breaking that promise or quietly doing another layer's job.</p>
+  </header>
+  <div class="article-layout">
+    <nav class="toc" aria-label="On this page"></nav>
+    <article class="prose">
+<h2>What each layer is for</h2>
+<p>The medallion pattern (the name was popularized by Databricks, the idea is older) splits a lakehouse into layers that each answer a different question. <span class="chip chip--bronze">bronze</span> answers "what exactly did the source send us, and when?" <span class="chip chip--silver">silver</span> answers "what is true about the business entities?" <span class="chip chip--gold">gold</span> answers "how do people want to ask questions about it?" The semantic model on top answers "what do the numbers mean?"</p>
+<p>Framed that way, the layers are less about data quality tiers and more about ownership. Each one has work it owns and work it must refuse.</p>
+<table>
+<thead><tr><th>Layer</th><th>Owns</th><th>Must not</th><th>Sample tables</th></tr></thead>
+<tbody>
+<tr><td><span class="chip chip--bronze">bronze</span></td><td>A faithful, replayable copy of the source. Load metadata (<code>_ingested_at</code>, <code>_batch_id</code>). Source column names as-is.</td><td>Rename into business terms, filter rows, join, or deduplicate anything beyond exact technical duplicates.</td><td><code>bronze.erp_sales_order_header</code>, <code>bronze.erp_customer</code>, <code>bronze.crm_salesperson</code>, <code>bronze.files_budget</code></td></tr>
+<tr><td><span class="chip chip--silver">silver</span></td><td>Typing, cleansing, deduplication, conforming codes, one row per entity (or entity version), row-level derivations.</td><td>Aggregate, apply report-specific filters, or shape tables for one consumer.</td><td><code>silver.sales_order_line</code> (header joined to lines, <code>net_amount</code> derived), <code>silver.customer</code>, <code>silver.budget</code></td></tr>
+<tr><td><span class="chip chip--gold">gold</span></td><td>Dimensional shape: grain, surrogate keys, SCD history, conformed dimensions, facts.</td><td>Cleanse source data (that leaked from silver) or hold ratios and report-only calculations.</td><td><code>dim_customer</code>, <code>dim_date</code>, <code>fact_sales</code>, <code>fact_inventory_daily</code>, <code>fact_budget</code></td></tr>
+<tr><td><span class="chip chip--semantic">semantic</span></td><td>Relationships, measures, friendly names, security, formatting.</td><td>Row-level transformation (Power Query fixes, calculated columns that patch upstream data).</td><td>"Sales &amp; Inventory"</td></tr>
+</tbody>
+</table>
+
+<h2>The contract between layers</h2>
+<p>Every boundary is a contract with five clauses: schema, grain, keys, freshness and quality. Write them down, and better, write them as tests that run after each load.</p>
+<ul>
+<li><strong>Bronze to silver.</strong> Bronze promises completeness and replay: every batch the source delivered is there, tagged with a <code>_batch_id</code>, and can be reprocessed. It promises nothing about cleanliness.</li>
+<li><strong>Silver to gold.</strong> Silver promises one row per business key (or per key and version), typed columns, conformed code values and stable business keys. For <code>silver.sales_order_line</code> that means one row per <code>(order_number, line_number)</code>, <code>net_amount = gross_amount - discount_amount</code>, a non-null <code>order_date</code>, and a <code>customer_id</code> that resolves in <code>silver.customer</code> or is explicitly flagged.</li>
+<li><strong>Gold to semantic.</strong> Gold promises a declared grain per fact, a surrogate key on every dimension (with an unknown member), and no orphaned fact keys. The model can then rely on one-to-many relationships without defensive DAX.</li>
+</ul>
+<div class="callout callout--rule"><strong>Rule of thumb</strong><p>If a consumer two layers up has to know a quirk of the source system to get the right answer, a contract was broken somewhere in between. Fix it at the lowest layer that could have absorbed it.</p></div>
+<p>A minimal set of contract tests for one silver table looks like this, and it is worth running on every load rather than in a quarterly audit:</p>
+<pre><code class="language-sql">-- silver.sales_order_line: grain and key tests (expect zero rows each)
+SELECT order_number, line_number, COUNT(*) AS n
+FROM silver.sales_order_line
+GROUP BY order_number, line_number
+HAVING COUNT(*) &gt; 1;
+
+SELECT s.order_number, s.line_number
+FROM silver.sales_order_line AS s
+LEFT JOIN silver.customer AS c ON c.customer_id = s.customer_id
+WHERE c.customer_id IS NULL;
+
+SELECT order_number, line_number
+FROM silver.sales_order_line
+WHERE net_amount &lt;&gt; gross_amount - discount_amount;</code></pre>
+
+<h2>Where business logic belongs</h2>
+<p>"Business logic" is too broad a phrase to place in one layer. Split it into four kinds and the placement becomes clear:</p>
+<ul>
+<li><strong>Cleansing logic</strong> (trim, cast, map <code>'Y'</code>/<code>'N'</code> to booleans, fix known bad codes) belongs in silver. It is about the source, so it should be done once, near the source.</li>
+<li><strong>Entity logic</strong> (joining order header to lines, deriving <code>net_amount</code>, picking the surviving record when two systems describe the same customer) also belongs in silver. It defines what an entity is.</li>
+<li><strong>Analytical shaping</strong> (surrogate keys, SCD history, role-playing date keys, the unknown member) belongs in gold. It is about how the entity will be queried.</li>
+<li><strong>Aggregation logic</strong> (ratios, time comparisons, anything that depends on what the user filtered) belongs in semantic measures. <em>Margin %</em> is a ratio of sums; storing it on a row is wrong the moment someone sums it.</li>
+</ul>
+<p>The awkward middle is a derived attribute like customer segment. If more than one consumer needs it (a report and a data science notebook), compute it in silver or as a gold dimension attribute. If only the model needs it and it depends on report-time selections, it is a measure.</p>
+<div class="callout callout--warn"><strong>Watch out</strong><p>Logic hidden in a semantic model's Power Query steps is invisible to every other consumer of the lakehouse. It is also unavailable once the model moves to Direct Lake, which has no Power Query layer for its tables. Treat Power Query fixes in a model as debt that belongs in silver.</p></div>
+
+<h2>Bronze: copies, shortcuts or views</h2>
+<p>Bronze does not have to be a physical copy. There are three common shapes, and the choice is really about where replay lives.</p>
+<table>
+<thead><tr><th></th><th>Copy (Copy activity, Copy job)</th><th>Shortcut or mirror</th><th>View over a shortcut or mirror</th></tr></thead>
+<tbody>
+<tr><td>History and replay</td><td>Yes, every batch is kept</td><td>Only what the source keeps</td><td>Only what the source keeps</td></tr>
+<tr><td>Latency</td><td>Schedule-bound</td><td>Current (mirroring is near real time)</td><td>Current</td></tr>
+<tr><td>Storage</td><td>Second copy in OneLake</td><td>None (shortcut) or managed replica (mirror)</td><td>None</td></tr>
+<tr><td>Source schema change</td><td>Absorbed at landing</td><td>Felt immediately downstream</td><td>Felt at the view, can be adapted there</td></tr>
+<tr><td>Good for</td><td>Volatile sources, APIs, files, anything you may need to replay</td><td>Data already in Delta, other lakehouses, ADLS, S3</td><td>Light renaming or column selection without a copy</td></tr>
+</tbody>
+</table>
+<p>When bronze is a shortcut or view, the replay promise moves to the source. That is fine when the source is an append-only landing zone or a mirror with history, and risky when it is an operational database that overwrites rows. In the sample model, the ERP tables could reasonably be mirrored, while <code>crm.salesperson</code> (API JSON) and <code>files.budget</code> (CSV) should be copied, because nobody keeps their history for you.</p>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>OneLake shortcuts to Delta data appear under a lakehouse's Tables and are queryable through the SQL analytics endpoint, which is read-only. Views created in the SQL analytics endpoint are T-SQL views; they are not the same object as Spark catalog views, so a notebook will not see them. Bronze views are a fine input to a silver notebook or T-SQL load, but a poor direct source for a semantic model: Direct Lake on the SQL endpoint falls back to DirectQuery for views, and Direct Lake on OneLake cannot read them at all.</p></div>
+
+<h2>Silver refresh before the warehouse load</h2>
+<p>The order of operations matters more than any single transform. A reliable run looks like this:</p>
+<ol>
+<li>Land bronze (or confirm the shortcut or mirror is current) and record a <code>_batch_id</code>.</li>
+<li>Refresh silver completely and run its contract tests. Stop the run if they fail.</li>
+<li>Load gold dimensions (<code>dim_customer</code>, <code>dim_product</code>, <code>dim_warehouse</code>, <code>dim_salesperson</code>; <code>dim_date</code> rarely changes).</li>
+<li>Load gold facts, looking up surrogate keys against the dimensions just loaded.</li>
+<li>Refresh or reframe the semantic model.</li>
+</ol>
+<p>Silver must finish first because gold change detection compares against it. A dimension load that reads a half-refreshed <code>silver.customer</code> will see missing customers as deletions or produce false Type 2 versions. Dimensions go before facts so that every fact row finds its key, and anything that does not is routed to the unknown member or an inferred member, never silently dropped.</p>
+<div class="callout callout--fabric"><strong>In Microsoft Fabric</strong><p>A common split is silver in a Lakehouse (Spark notebooks) and gold in a Warehouse (T-SQL). The Warehouse can read lakehouse tables in the same workspace with three-part names, for example <code>SilverLakehouse.silver.sales_order_line</code> in a schema-enabled lakehouse. Warehouse multi-table transactions let a dimension and fact load commit together. Put the semantic model refresh as the last pipeline activity, and consider turning off the model's automatic Direct Lake updates so framing happens only after a complete, tested load.</p></div>
+
+<h2>When to add a layer, or skip one</h2>
+<p>Three layers is a default, not a law.</p>
+<ul>
+<li><strong>Skip silver</strong> when the source is already clean and entity-shaped (a well-run SaaS API, a curated upstream lakehouse) and gold has one consumer. The cost is that gold transforms absorb the cleansing. That is tolerable for one consumer and painful by the third.</li>
+<li><strong>Add a serving or "platinum" layer</strong> when several models or tools need the same aggregated or cross-domain tables: an aggregate fact for a very large model, a wide feature table for data science, or a domain-specific mart built from shared gold. Many teams simply count the semantic model as the fourth layer, which is fair.</li>
+<li><strong>Do not add layers for appearance.</strong> Each layer is another copy to keep fresh, test and explain. A layer earns its place by owning a responsibility nobody else can.</li>
+</ul>
+<div class="callout callout--open"><strong>Open question</strong><p>If bronze is a set of views over mirrored sources and silver is mostly renames and casts, is silver still worth materializing? The deciding factor is usually how many consumers read the cleaned entities. See <a href="open-questions.html">Open questions</a>.</p></div>
+
+<h2>Lakehouse or Warehouse for gold</h2>
+<table>
+<thead><tr><th>Factor</th><th>Lakehouse gold</th><th>Warehouse gold</th></tr></thead>
+<tbody>
+<tr><td>Write engine</td><td>Spark (PySpark, Spark SQL)</td><td>T-SQL</td></tr>
+<tr><td>Transactions</td><td>ACID per Delta table</td><td>Multi-table transactions</td></tr>
+<tr><td>SQL access</td><td>SQL analytics endpoint, read-only</td><td>Full read and write T-SQL</td></tr>
+<tr><td>Direct Lake</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Security in SQL</td><td>Endpoint-level object and row security; OneLake security is still evolving</td><td>GRANT, row-level security, column-level security, dynamic data masking</td></tr>
+<tr><td>Best fit</td><td>Python-heavy transforms, data engineering teams</td><td>SQL-first teams, dimension and fact loads that must commit together</td></tr>
+</tbody>
+</table>
+<p>Pick the engine your team is fluent in and keep a subject area's gold in one place. Splitting <code>fact_sales</code> into a lakehouse and its dimensions into a warehouse doubles the ways a load can half-succeed.</p>
+<div class="callout callout--see"><strong>See it</strong><p>The <a href="../explore/medallion-stack.html">Medallion stack</a> lets you drill from layer to table to column on the sample model, and the <a href="../explore/lineage-flow.html">Lineage flow</a> shows every table from source to report.</p></div>
+    </article>
+  </div>
+</main>
+<div id="site-footer"></div>
+</body>
+</html>
