@@ -141,17 +141,26 @@
     host.replaceWith(header);
 
     var hud = el("nav", { class: "tp-hud", "aria-label": "Labs" });
-    hud.appendChild(el("div", { class: "num", html: "02<small>/03</small>" }));
+    hud.appendChild(el("div", { class: "num", text: "02" }));
     var nm = el("div", { class: "nm" });
     nm.appendChild(el("b", { text: SITE.name }));
     var bars = el("div", { class: "bars" });
-    bars.appendChild(el("a", { href: labsRoot + "dataviz-lab/", "aria-label": "Data Viz Lab" }));
-    bars.appendChild(el("a", { href: root || "./", "aria-current": "page", "aria-label": "Data Model Lab" }));
-    bars.appendChild(el("a", { href: labsRoot, "aria-label": "Futobi Labs" }));
+    bars.appendChild(el("a", { href: labsRoot, "aria-label": "Futobi Labs", "data-k": "00 Futobi" }));
+    bars.appendChild(el("a", { href: labsRoot + "dataviz-lab/", "aria-label": "Data Viz Lab", "data-k": "01 Viz" }));
+    bars.appendChild(el("a", { href: root || "./", "aria-current": "page", "aria-label": "Data Model Lab", "data-k": "02 Model" }));
     nm.appendChild(bars);
     hud.appendChild(nm);
     hud.appendChild(el("a", { class: "home", href: "https://github.com/futobi-labs", rel: "noopener", "aria-label": "Futobi Labs on GitHub", text: "↗" }));
     document.body.appendChild(hud);
+    // out of the way while you read; back on scroll up and at the end
+    var last = window.scrollY, de = document.documentElement;
+    function atEnd() { return window.scrollY + window.innerHeight >= de.scrollHeight - 60; }
+    if (de.scrollHeight > window.innerHeight + 60) hud.classList.add("tuck");
+    window.addEventListener("scroll", function () {
+      var y = window.scrollY, d = y - last;
+      if (atEnd() || d < -6) hud.classList.remove("tuck"); else if (d > 6) hud.classList.add("tuck");
+      if (Math.abs(d) > 6) last = y;
+    }, { passive: true });
   }
 
   // ---------- header ----------
